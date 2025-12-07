@@ -1,0 +1,102 @@
+<resources>
+    <string name="app_name">LedController</string>
+
+    <string name="welcome_title">Welcome!</string>
+    <string name="welcome_subtitle">Let\'s set up your lighting in seconds.</string>
+    <string name="where_leds">Where are your LEDs?</string>
+    <string name="room_name_label">Room Name</string>
+    <string name="room_name_placeholder">Ex: My Studio</string>
+    <string name="suggestions">Suggestions</string>
+    <string name="finish_button">Finish</string>
+
+    <string name="auth_button">Authorize &amp; Continue</string>
+    <string name="permission_bt_title">Bluetooth</string>
+    <string name="permission_bt_desc">To connect to your LEDs.</string>
+    <string name="permission_loc_title">Location</string>
+    <string name="permission_loc_desc">Android needs this to scan for devices.</string>
+
+    <string name="perm_required_title">Permissions Required</string>
+    <string name="perm_required_desc">Required to sync with your music player (Spotify, YouTube...) and get album art.</string>
+
+    <string name="perm_audio_title">Microphone Access</string>
+    <string name="perm_audio_desc">Required to sync lights with music beats. No audio is recorded.</string>
+
+    <string name="nav_control">Control</string>
+    <string name="nav_music">Music</string>
+
+    <string name="connected">Connected</string>
+    <string name="scanning">Searching...</string>
+    <string name="disconnect">Disconnect</string>
+    <string name="brightness">Brightness</string>
+    <string name="pure_colors">Pure Colors</string>
+    <string name="my_presets">My Presets</string>
+    <string name="add">Add</string>
+    <string name="no_presets">No presets.</string>
+
+    <string name="mode_static">Static</string>
+    <string name="scene_disco">Disco</string>
+
+    <string name="new_preset_title">New Preset</string>
+    <string name="create">Create</string>
+    <string name="cancel">Cancel</string>
+    <string name="choose_icon">Choose an icon</string>
+    <string name="delete_title">Delete?</string>
+    <string name="delete_confirm">Permanently delete "%1$s"?</string>
+    <string name="delete">Delete</string>
+
+    <string name="preset_white">Focus</string> <string name="preset_reading">Reading</string>
+    <string name="preset_cinema">Cinema</string>
+    <string name="preset_night">Night</string>
+    <string name="preset_gaming">Gaming</string>
+
+    <string name="icon_sunny">Sunny</string>
+    <string name="icon_fire">Fire</string>
+    <string name="icon_water">Water</string>
+    <string name="icon_forest">Forest</string>
+    <string name="icon_night">Night</string>
+    <string name="icon_star">Star</string>
+    <string name="icon_love">Love</string>
+    <string name="icon_energy">Energy</string>
+    <string name="icon_home">Home</string>
+    <string name="icon_living">Living</string>
+    <string name="icon_kitchen">Kitchen</string>
+    <string name="icon_bath">Bath</string>
+    <string name="icon_bedroom">Bedroom</string>
+    <string name="icon_desk">Desk</string>
+    <string name="icon_game">Gaming</string>
+    <string name="icon_movie">Movie</string>
+    <string name="icon_book">Reading</string>
+    <string name="icon_music">Music</string>
+    <string name="icon_work">Work</string>
+    <string name="icon_computer">PC</string>
+    <string name="icon_party">Party</string>
+    <string name="icon_coffee">Break</string>
+
+    <string name="devices_title">Devices</string>
+    <string name="scanning_desc">Looking for compatible LEDs...</string>
+    <string name="unknown_device">Unknown Device</string>
+    <string name="close">Close</string>
+    <string name="signal">Signal: %1$d dBm</string>
+
+    <string name="music_waiting">Waiting for sound...</string>
+    <string name="sync_active">Sync Active</string>
+    <string name="sync_enable">Enable Sync</string>
+    <string name="sync_active_desc">Microphone listening &amp; Metadata syncing...</string>
+    <string name="sync_enable_desc">Tap to start light show</string>
+
+    <string name="customization">Customization</string>
+    <string name="amoled_mode">Amoled Mode</string>
+    <string name="amoled_desc">Pure black to save battery</string>
+    <string name="language">Language</string>
+    <string name="system_default">System Default</string>
+
+    <string name="dev_passion">Built with Passion</string>
+    <string name="dev_desc">An open-source project exploring Android BLE &amp; Jetpack Compose.</string>
+    <string name="github_link">View on GitHub (@alan7383)</string>
+
+    <string name="notif_channel_name">LED Synchronization</string>
+    <string name="notif_active_title">Music Sync Active</string>
+    <string name="notif_active_desc">Running in background...</string>
+    <string name="stop">Stop</string>
+
+</resources>
