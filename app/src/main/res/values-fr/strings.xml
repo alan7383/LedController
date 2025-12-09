@@ -85,19 +85,34 @@
     <string name="sync_active_desc">Micro actif &amp; Méta-données...</string>
     <string name="sync_enable_desc">Appuyez pour démarrer</string>
 
+    <string name="settings_title">Paramètres</string>
+    <string name="settings_category_general">Général</string>
+    <string name="settings_category_appearance">Apparence</string>
+    <string name="settings_category_about">À propos</string>
+
     <string name="customization">Personnalisation</string>
     <string name="amoled_mode">Mode AMOLED</string>
     <string name="amoled_desc">Noir pur (économie batterie)</string>
     <string name="language">Langue</string>
     <string name="system_default">Système par défaut</string>
 
-    <string name="dev_passion">Développé avec Passion</string>
+    <string name="dev_passion">Développeur</string>
     <string name="dev_desc">Un projet open-source explorant Android BLE &amp; Jetpack Compose.</string>
-    <string name="github_link">Voir sur GitHub (@alan7383)</string>
+    <string name="github_link">@alan7383 (GitHub)</string>
+    <string name="licenses">Licences Open Source</string>
+    <string name="licenses_desc">Logiciels tiers utilisés</string>
 
     <string name="notif_channel_name">Synchronisation LED</string>
     <string name="notif_active_title">Synchro Musique Active</string>
     <string name="notif_active_desc">L\'application tourne en arrière-plan...</string>
     <string name="stop">Arrêter</string>
+
+    <string name="theme_title">Thème</string>
+    <string name="theme_light">Clair</string>
+    <string name="theme_dark">Sombre</string>
+
+    <string name="licenses_title">Licences Open Source</string>
+    <string name="view_license">Voir la licence</string>
+    <string name="author">Par %1$s</string>
 
 </resources>

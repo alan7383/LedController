@@ -84,19 +84,34 @@
     <string name="sync_active_desc">Microphone listening &amp; Metadata syncing...</string>
     <string name="sync_enable_desc">Tap to start light show</string>
 
+    <string name="settings_title">Settings</string>
+    <string name="settings_category_general">General</string>
+    <string name="settings_category_appearance">Appearance</string>
+    <string name="settings_category_about">About</string>
+
     <string name="customization">Customization</string>
     <string name="amoled_mode">Amoled Mode</string>
     <string name="amoled_desc">Pure black to save battery</string>
     <string name="language">Language</string>
     <string name="system_default">System Default</string>
 
-    <string name="dev_passion">Built with Passion</string>
+    <string name="dev_passion">Developer</string>
     <string name="dev_desc">An open-source project exploring Android BLE &amp; Jetpack Compose.</string>
-    <string name="github_link">View on GitHub (@alan7383)</string>
+    <string name="github_link">@alan7383 (GitHub)</string>
+    <string name="licenses">Open Source Licenses</string>
+    <string name="licenses_desc">Third-party software used</string>
 
     <string name="notif_channel_name">LED Synchronization</string>
     <string name="notif_active_title">Music Sync Active</string>
     <string name="notif_active_desc">Running in background...</string>
     <string name="stop">Stop</string>
+
+    <string name="theme_title">Theme</string>
+    <string name="theme_light">Light</string>
+    <string name="theme_dark">Dark</string>
+
+    <string name="licenses_title">Open Source Licenses</string>
+    <string name="view_license">View License</string>
+    <string name="author">By %1$s</string>
 
 </resources>
