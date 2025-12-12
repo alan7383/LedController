@@ -1,4 +1,4 @@
-package com.example.ledcontroller
+package com.example.ledcontroller.util
 
 import android.annotation.SuppressLint
 import android.bluetooth.*
@@ -6,6 +6,7 @@ import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
 import android.content.Context
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -140,7 +141,7 @@ object BleManager {
     @SuppressLint("MissingPermission")
     private fun writeCharacteristicCompat(gatt: BluetoothGatt, char: BluetoothGattCharacteristic, payload: ByteArray): Boolean {
         return try {
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 val code = gatt.writeCharacteristic(char, payload, BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE)
                 code == BluetoothStatusCodes.SUCCESS
             } else {
