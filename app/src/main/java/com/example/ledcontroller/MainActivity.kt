@@ -15,11 +15,13 @@ import android.os.Bundle
 import android.provider.Settings
 import android.view.HapticFeedbackConstants
 import android.widget.Toast
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
-import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
@@ -46,6 +48,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
@@ -75,25 +78,11 @@ import kotlinx.coroutines.launch
 import java.util.Locale
 import java.util.UUID
 import kotlin.math.*
-import androidx.activity.compose.BackHandler
-import androidx.compose.ui.input.nestedscroll.nestedScroll
-import androidx.compose.material3.FilledTonalIconButton
-import androidx.compose.material3.IconButtonDefaults
 import com.example.ledcontroller.BuildConfig
 
 // ------------------------------------------------------------------------
-// --- CUSTOM AMOLED THEME ---
+// --- CUSTOM THEME WRAPPERS ---
 // ------------------------------------------------------------------------
-private val AmoledDarkColorScheme = darkColorScheme(
-    primary = Color(0xFFD0BCFF),
-    secondary = Color(0xFFCCC2DC),
-    tertiary = Color(0xFFEFB8C8),
-    background = Color.Black, // True black
-    surface = Color.Black,    // True black
-    onBackground = Color.White,
-    onSurface = Color.White,
-    surfaceVariant = Color(0xFF121212), // Very dark grey for cards
-)
 
 @Composable
 fun AppTheme(
@@ -117,6 +106,8 @@ fun AppTheme(
         darkTheme -> darkColorScheme()
         else -> lightColorScheme()
     }
+
+    // Apply AMOLED Black override if enabled and in dark mode
     if (useAmoled && darkTheme) {
         colorScheme = colorScheme.copy(
             background = Color.Black,
@@ -130,7 +121,7 @@ fun AppTheme(
 
     MaterialTheme(
         colorScheme = colorScheme,
-        typography = Typography(),
+        typography = Typography(), // Ensure Typography is defined in Type.kt
         content = content
     )
 }
@@ -141,7 +132,7 @@ fun AppTheme(
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     val bleManager = BleManager
 
-    // Using waveform from Service
+    // Using waveform from AudioSyncService
     val waveform = AudioSyncService.waveformFlow
 
     val trackTitle = MusicStateRepo.trackTitle
@@ -152,7 +143,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     var isMusicModeActive by mutableStateOf(false)
     var isAmoledMode by mutableStateOf(false)
     var themeMode by mutableIntStateOf(0)
-
 
     init {
         BleManager.init(application)
@@ -166,12 +156,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             sharedPref.edit().putInt("theme_mode", 0).apply()
             themeMode = 0
         }
-        // ----------------------
 
+        // Check if service is already running
         isMusicModeActive = AudioSyncService.isServiceRunning
     }
 
-    // AJOUTER CETTE FONCTION :
     fun updateTheme(mode: Int, context: Context) {
         themeMode = mode
         context.getSharedPreferences("LedControllerPrefs", Context.MODE_PRIVATE)
@@ -180,7 +169,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun toggleAmoled(enable: Boolean, context: Context) {
         isAmoledMode = enable
-        context.getSharedPreferences("LedControllerPrefs", Context.MODE_PRIVATE).edit().putBoolean("amoled_mode", enable).apply()
+        context.getSharedPreferences("LedControllerPrefs", Context.MODE_PRIVATE)
+            .edit().putBoolean("amoled_mode", enable).apply()
     }
 
     fun skipNext() = MusicStateRepo.transportControls?.skipToNext()
@@ -207,8 +197,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         isMusicModeActive = false
 
         // Stop the SERVICE
-        val intent = Intent(getApplication(), AudioSyncService::class.java)
-        intent.action = "STOP"
+        val intent = Intent(getApplication(), AudioSyncService::class.java).apply {
+            action = "STOP"
+        }
         getApplication<Application>().startService(intent)
 
         if (turnOffLights) {
@@ -228,11 +219,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 // ------------------------------------------------------------------------
 // --- MAIN ACTIVITY ---
 // ------------------------------------------------------------------------
-class MainActivity : AppCompatActivity() {
+class MainActivity : ComponentActivity() {
     private val viewModel: MainViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // ENABLE EDGE-TO-EDGE (Essential for Modern Android Look)
+        enableEdgeToEdge()
+
         setContent {
             AppTheme(themeMode = viewModel.themeMode, useAmoled = viewModel.isAmoledMode) {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
@@ -262,7 +257,6 @@ fun checkPermissions(context: Context): Boolean {
     }
 }
 
-// Ajoutez cet Enum pour définir les écrans
 enum class AppScreen { Home, Settings }
 
 @Composable
@@ -272,10 +266,10 @@ fun MainAppContent(viewModel: MainViewModel) {
     val sharedPref = remember { context.getSharedPreferences("LedControllerPrefs", Context.MODE_PRIVATE) }
     var isSetupDone by remember { mutableStateOf(sharedPref.getBoolean("is_setup_done", false)) }
 
-    // --- NOUVEAU : État de navigation ---
+    // Navigation State
     var currentScreen by remember { mutableStateOf(AppScreen.Home) }
 
-    // (Logique Bluetooth existante inchangée...)
+    // Bluetooth Launcher logic
     val enableBluetoothLauncher = rememberLauncherForActivityResult(contract = ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == Activity.RESULT_OK) viewModel.bleManager.startScan(manual = false)
     }
@@ -304,7 +298,7 @@ fun MainAppContent(viewModel: MainViewModel) {
             isSetupDone = true
         }
     } else {
-        // --- NOUVEAU : Transition entre Accueil et Paramètres ---
+        // Simple screen transition
         AnimatedContent(
             targetState = currentScreen,
             label = "NavTransition",
@@ -320,8 +314,6 @@ fun MainAppContent(viewModel: MainViewModel) {
                 AppScreen.Home -> {
                     val defaultName = stringResource(R.string.room_name_placeholder)
                     val roomName = sharedPref.getString("room_name", defaultName) ?: defaultName
-
-                    // On passe la fonction pour ouvrir les paramètres
                     HomeScreenWithBottomNav(viewModel, roomName) { currentScreen = AppScreen.Settings }
                 }
                 AppScreen.Settings -> {
@@ -331,7 +323,7 @@ fun MainAppContent(viewModel: MainViewModel) {
                     SettingsScreen(
                         viewModel = viewModel,
                         roomName = roomName,
-                        onBack = { currentScreen = AppScreen.Home }, // Retour à l'accueil
+                        onBack = { currentScreen = AppScreen.Home },
                         onRoomNameChange = { newName ->
                             roomName = newName
                             sharedPref.edit().putString("room_name", newName).apply()
@@ -351,7 +343,7 @@ fun HomeScreenWithBottomNav(viewModel: MainViewModel, roomName: String, onOpenSe
         bottomBar = {
             NavigationBar(
                 containerColor = MaterialTheme.colorScheme.surface,
-                tonalElevation = 0.dp // Flat for Amoled
+                tonalElevation = 0.dp // Flat for Amoled look
             ) {
                 NavigationBarItem(
                     icon = { Icon(Icons.Rounded.Tune, contentDescription = null) },
@@ -369,7 +361,6 @@ fun HomeScreenWithBottomNav(viewModel: MainViewModel, roomName: String, onOpenSe
         }
     ) { padding ->
         Box(modifier = Modifier.padding(padding)) {
-            // Using Crossfade for smooth transition
             Crossfade(targetState = currentTab, label = "TabSwitch") { tab ->
                 if (tab == 0) {
                     ProControlScreen(viewModel.bleManager, roomName, viewModel, onOpenSettings)
@@ -434,13 +425,11 @@ fun MusicPlayerInterface(viewModel: MainViewModel) {
     val albumArt by viewModel.albumArt.collectAsState()
     val isExternalPlaying by viewModel.isExternalMusicPlaying.collectAsState()
 
-    // Local state for mode buttons UI
     var isDiscoModeService by remember { mutableStateOf(AudioSyncService.isDiscoMode) }
 
     val currentEnergy = waveform.lastOrNull() ?: 0f
     val animatedPulse by animateFloatAsState(targetValue = currentEnergy, label = "pulse")
 
-    // MAIN CONTAINER (No global Scroll, using weights for balance)
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -448,23 +437,22 @@ fun MusicPlayerInterface(viewModel: MainViewModel) {
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
 
-        // --- ZONE 1 : COVER & VISUALIZER (Takes all free space at the top) ---
+        // ZONE 1: COVER & VISUALIZER
         Box(
             modifier = Modifier
-                .weight(1f) // Elastic to fill screen
+                .weight(1f)
                 .fillMaxWidth(),
             contentAlignment = Alignment.Center
         ) {
             Card(
                 modifier = Modifier
-                    .fillMaxWidth(0.9f) // 90% width
-                    .aspectRatio(1f)    // Keeps it square
+                    .fillMaxWidth(0.9f)
+                    .aspectRatio(1f)
                     .shadow(elevation = (8 + (animatedPulse * 20)).dp, shape = RoundedCornerShape(28.dp)),
                 shape = RoundedCornerShape(28.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
             ) {
                 Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-                    // Cover Animation (Crossfade + Scale)
                     AnimatedContent(
                         targetState = albumArt,
                         label = "AlbumArt",
@@ -481,36 +469,30 @@ fun MusicPlayerInterface(viewModel: MainViewModel) {
                                 modifier = Modifier.fillMaxSize()
                             )
                         } else {
-                            // Placeholder if no cover
                             Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.Center) {
                                 Icon(Icons.Rounded.MusicNote, null, Modifier.size(80.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f))
                             }
                         }
                     }
 
-                    // Dark gradient for readability
                     Box(modifier = Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.5f)))))
-
-                    // Visualizer on top
-                    VisualizerView(waveform = waveform, modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 12.dp))
+                    VisualizerView(waveform = waveform, modifier = Modifier.fillMaxSize().padding(12.dp))
                 }
             }
         }
 
         Spacer(Modifier.height(24.dp))
 
-        // --- ZONE 2 : INFO & CONTROLS (Compact) ---
+        // ZONE 2: INFO & CONTROLS
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier.fillMaxWidth()
         ) {
-            // Titles
             Text(trackTitle, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
             Text(if (artistName.isNotEmpty()) artistName else stringResource(R.string.music_waiting), style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.primary, maxLines = 1)
 
             Spacer(Modifier.height(24.dp))
 
-            // Player Buttons (Prev / Play / Next)
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceEvenly,
@@ -536,20 +518,12 @@ fun MusicPlayerInterface(viewModel: MainViewModel) {
 
         Spacer(Modifier.height(24.dp))
 
-        // --- ZONE 3 : SETTINGS & TOGGLE (Bottom of screen) ---
-        Column(
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            // Mode Selector (Chips side-by-side)
+        // ZONE 3: MODE & TOGGLE
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 SuggestionChip(
                     onClick = { AudioSyncService.isDiscoMode = false; isDiscoModeService = false },
-                    label = {
-                        Text(
-                            stringResource(R.string.mode_static),
-                            fontWeight = if(!isDiscoModeService) FontWeight.Bold else FontWeight.Normal
-                        )
-                    },
+                    label = { Text(stringResource(R.string.mode_static), fontWeight = if(!isDiscoModeService) FontWeight.Bold else FontWeight.Normal) },
                     icon = { if (!isDiscoModeService) Icon(Icons.Rounded.Check, null, Modifier.size(18.dp)) },
                     colors = SuggestionChipDefaults.suggestionChipColors(
                         containerColor = if (!isDiscoModeService) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
@@ -561,31 +535,11 @@ fun MusicPlayerInterface(viewModel: MainViewModel) {
 
                 SuggestionChip(
                     onClick = { AudioSyncService.isDiscoMode = true; isDiscoModeService = true },
-                    label = {
-                        Text(
-                            stringResource(R.string.scene_disco),
-                            fontWeight = if(isDiscoModeService) FontWeight.Bold else FontWeight.Normal
-                        )
-                    },
-                    icon = {
-                        if (isDiscoModeService) {
-                            Icon(
-                                Icons.Rounded.AutoAwesome,
-                                null,
-                                Modifier.size(18.dp),
-                                // FIX CONTRAST: Force icon color to Dark Blue (onPrimaryContainer)
-                                tint = MaterialTheme.colorScheme.onPrimaryContainer
-                            )
-                        }
-                    },
+                    label = { Text(stringResource(R.string.scene_disco), fontWeight = if(isDiscoModeService) FontWeight.Bold else FontWeight.Normal) },
+                    icon = { if (isDiscoModeService) Icon(Icons.Rounded.AutoAwesome, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer) },
                     colors = SuggestionChipDefaults.suggestionChipColors(
-                        // FIX COLOR: Use Primary (Blue) instead of Tertiary (Pink)
                         containerColor = if (isDiscoModeService) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
-
-                        // FIX TEXT: Dark blue on light blue background
                         labelColor = if (isDiscoModeService) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
-
-                        // FIX ICON (Extra safety)
                         iconContentColor = if (isDiscoModeService) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
                     ),
                     border = if (isDiscoModeService) null else SuggestionChipDefaults.suggestionChipBorder(enabled = true),
@@ -593,7 +547,6 @@ fun MusicPlayerInterface(viewModel: MainViewModel) {
                 )
             }
 
-            // Big Activation Button (Android 14 Quick Settings Style)
             Surface(
                 onClick = { if (isMusicModeActive) viewModel.stopMusicSync() else viewModel.startMusicSync() },
                 shape = RoundedCornerShape(24.dp),
@@ -619,7 +572,6 @@ fun MusicPlayerInterface(viewModel: MainViewModel) {
                         )
                     }
 
-                    // --- SWITCH FIXED (No SwitchDefaults.IconSize to prevent crash) ---
                     Switch(
                         checked = isMusicModeActive,
                         onCheckedChange = { if (it) viewModel.startMusicSync() else viewModel.stopMusicSync() },
@@ -630,21 +582,12 @@ fun MusicPlayerInterface(viewModel: MainViewModel) {
                             uncheckedTrackColor = Color.Transparent
                         ),
                         thumbContent = {
-                            if (isMusicModeActive) {
-                                Icon(
-                                    imageVector = Icons.Rounded.Check,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(16.dp), // Hardcoded value to fix crash
-                                    tint = MaterialTheme.colorScheme.onPrimary
-                                )
-                            } else {
-                                Icon(
-                                    imageVector = Icons.Rounded.Close,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(16.dp), // Hardcoded value to fix crash
-                                    tint = MaterialTheme.colorScheme.surfaceContainerHighest
-                                )
-                            }
+                            Icon(
+                                imageVector = if (isMusicModeActive) Icons.Rounded.Check else Icons.Rounded.Close,
+                                contentDescription = null,
+                                modifier = Modifier.size(SwitchDefaults.IconSize),
+                                tint = if (isMusicModeActive) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.surfaceContainerHighest
+                            )
                         }
                     )
                 }
@@ -654,71 +597,36 @@ fun MusicPlayerInterface(viewModel: MainViewModel) {
 }
 
 @Composable
-fun VisualizerView(
-    waveform: List<Float>, // Need full list for history
-    modifier: Modifier = Modifier
-) {
+fun VisualizerView(waveform: List<Float>, modifier: Modifier = Modifier) {
     val barColor = MaterialTheme.colorScheme.primary
-    val barCount = 29 // Odd number for perfect center
+    val barCount = 29
+    val animations = remember { List(barCount) { Animatable(0f) } }
 
-    // 1. Initialize animations for each bar
-    val animations = remember {
-        List(barCount) { Animatable(0f) }
-    }
-
-    // 2. Fluid update of values
     LaunchedEffect(waveform) {
         val centerIndex = barCount / 2
-
-        // Iterate through all visual bars
         animations.forEachIndexed { index, animatable ->
-
-            // MATHS: Calculate distance from center (0 = center, 14 = edges)
             val distFromCenter = kotlin.math.abs(index - centerIndex)
-
-            // Retrieve corresponding audio data for this distance
-            // (Center takes the most recent 'last()' data, edges take older data)
-            // Reverse waveform index because end of list usually = recent sound
             val waveIndex = (waveform.size - 1 - distFromCenter).coerceAtLeast(0)
             val rawAmplitude = waveform.getOrElse(waveIndex) { 0f }
-
-            // SHAPE: Apply a curve to force "Pyramid" shape
-            // Even if sound is loud everywhere, edges are mathematically reduced
-            val scaleFactor = 1f - (distFromCenter.toFloat() / centerIndex.toFloat()).pow(1.5f) // Smooth curve
-
-            // Calculate final target
+            val scaleFactor = 1f - (distFromCenter.toFloat() / centerIndex.toFloat()).pow(1.5f)
             val targetValue = (rawAmplitude * scaleFactor).coerceIn(0.01f, 1f)
 
             launch {
-                animatable.animateTo(
-                    targetValue = targetValue,
-                    animationSpec = tween(
-                        durationMillis = 90, // Slightly slower for "wave" effect
-                        easing = FastOutSlowInEasing
-                    )
-                )
+                animatable.animateTo(targetValue, animationSpec = tween(durationMillis = 90, easing = FastOutSlowInEasing))
             }
         }
     }
 
-    // 3. Drawing
     Canvas(modifier = modifier) {
         val width = size.width
         val height = size.height
-
-        // Calculate bar width with small spacing
         val totalBarWidth = width / barCount
-        val barWidth = totalBarWidth * 0.6f // Bar is 60% of allocated space
-        val maxHeight = height * 0.9f // Safety margin
+        val barWidth = totalBarWidth * 0.6f
+        val maxHeight = height * 0.9f
 
         animations.forEachIndexed { index, animatable ->
-            // Precise X position calculation
             val x = (index * totalBarWidth) + (totalBarWidth / 2)
-
-            // Height smoothed by animation
-            val barHeight = (animatable.value * maxHeight).coerceAtLeast(6f) // Min 6px for visibility
-
-            // Draw with rounded caps
+            val barHeight = (animatable.value * maxHeight).coerceAtLeast(6f)
             drawLine(
                 color = barColor,
                 start = Offset(x, (height / 2) - (barHeight / 2)),
@@ -731,7 +639,7 @@ fun VisualizerView(
 }
 
 // ------------------------------------------------------------------------
-// --- EXISTING COMPONENTS & SETTINGS ---
+// --- PRO CONTROL SCREEN & PRESETS ---
 // ------------------------------------------------------------------------
 
 enum class PresetIcon(val icon: ImageVector, val labelRes: Int) {
@@ -750,7 +658,7 @@ enum class PresetIcon(val icon: ImageVector, val labelRes: Int) {
 
 data class LightPreset(val id: String = UUID.randomUUID().toString(), val name: String, val hue: Float, val sat: Float, val bri: Float, val iconName: String)
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun OnboardingScreen(onSetupComplete: (String) -> Unit) {
     var step by remember { mutableIntStateOf(0) }
@@ -760,12 +668,8 @@ fun OnboardingScreen(onSetupComplete: (String) -> Unit) {
         if (permissions.values.all { it }) step = 1 else Toast.makeText(context, context.getString(R.string.perm_required_desc), Toast.LENGTH_LONG).show()
     }
     val suggestions = listOf(
-        R.string.icon_living,
-        R.string.icon_bedroom,
-        R.string.icon_kitchen,
-        R.string.icon_desk,
-        R.string.icon_game,
-        R.string.icon_bath
+        R.string.icon_living, R.string.icon_bedroom, R.string.icon_kitchen,
+        R.string.icon_desk, R.string.icon_game, R.string.icon_bath
     ).map { stringResource(it) }
 
     Scaffold { padding ->
@@ -796,7 +700,6 @@ fun OnboardingScreen(onSetupComplete: (String) -> Unit) {
                         Text(stringResource(R.string.where_leds), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
                         OutlinedTextField(value = roomName, onValueChange = { roomName = it }, label = { Text(stringResource(R.string.room_name_label)) }, placeholder = { Text(stringResource(R.string.room_name_placeholder)) }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp))
                         Text(stringResource(R.string.suggestions), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-                        @OptIn(ExperimentalLayoutApi::class)
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             suggestions.forEach { s -> FilterChip(selected = roomName == s, onClick = { roomName = s }, label = { Text(s) }) }
                         }
@@ -830,6 +733,9 @@ fun ProControlScreen(bleManager: BleManager, initialRoomName: String, viewModel:
     val connectionState by bleManager.connectionState.collectAsState()
     val isScanning by bleManager.isScanning.collectAsState()
 
+    // TopAppBar Scroll Behavior for Collapsing Toolbar effect
+    val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
+
     val sharedPref = remember { context.getSharedPreferences("LedControllerPrefs", Context.MODE_PRIVATE) }
     val gson = remember { Gson() }
 
@@ -841,7 +747,6 @@ fun ProControlScreen(bleManager: BleManager, initialRoomName: String, viewModel:
     var isDiscoMode by remember { mutableStateOf(false) }
 
     var showAddDialog by remember { mutableStateOf(false) }
-    var showSettingsDialog by remember { mutableStateOf(false) }
     var showDeviceListDialog by remember { mutableStateOf(false) }
     var presetToDelete by remember { mutableStateOf<LightPreset?>(null) }
 
@@ -852,8 +757,7 @@ fun ProControlScreen(bleManager: BleManager, initialRoomName: String, viewModel:
     LaunchedEffect(scannedDevices) {
         if (bleManager.targetDeviceAddress == null &&
             connectionState == BleManager.ConnectionState.DISCONNECTED &&
-            scannedDevices.isNotEmpty() &&
-            !showDeviceListDialog
+            scannedDevices.isNotEmpty() && !showDeviceListDialog
         ) {
             showDeviceListDialog = true
         }
@@ -867,13 +771,6 @@ fun ProControlScreen(bleManager: BleManager, initialRoomName: String, viewModel:
             .putFloat("saved_bri", brightness)
             .putBoolean("saved_power", isPowerOn)
             .apply()
-    }
-
-    // Restore Sync after music (Optional)
-    LaunchedEffect(Unit) {
-        if (viewModel.isMusicModeActive) {
-            // We don't cut music automatically anymore, user choice
-        }
     }
 
     // Preset Management
@@ -917,7 +814,7 @@ fun ProControlScreen(bleManager: BleManager, initialRoomName: String, viewModel:
         }
     }
 
-    // LOCAL Disco Loop (Control tab only, different from Music mode)
+    // Local Disco Loop
     LaunchedEffect(isDiscoMode, isPowerOn) {
         if (isDiscoMode && isPowerOn) {
             var dHue = 0f
@@ -930,10 +827,7 @@ fun ProControlScreen(bleManager: BleManager, initialRoomName: String, viewModel:
         }
     }
 
-    // --- MAJOR MODIFICATION ---
-    // Real-time BLE color sending (Slider/Wheel)
-    // Added condition: && !viewModel.isMusicModeActive
-    // If music is playing, we do NOT send BLE commands from here (Audio Service handles it).
+    // Real-time BLE color sending
     LaunchedEffect(Unit) {
         snapshotFlow { Triple(hue, saturation, brightness) }.conflate().collect { (h, s, b) ->
             if (connectionState == BleManager.ConnectionState.CONNECTED && !isDiscoMode && isPowerOn && !viewModel.isMusicModeActive) {
@@ -946,14 +840,12 @@ fun ProControlScreen(bleManager: BleManager, initialRoomName: String, viewModel:
     // Power ON/OFF Management
     LaunchedEffect(isPowerOn, connectionState) {
         if (connectionState == BleManager.ConnectionState.CONNECTED && !isDiscoMode) {
-            // If music is active, let service handle it, except for OFF
             if (isPowerOn) {
                 if (!viewModel.isMusicModeActive) {
                     delay(200)
                     updateLight(hue, saturation, brightness)
                 }
             } else {
-                // If OFF, cut everything (lights only)
                 bleManager.sendColor(0, 0, 0)
             }
         }
@@ -962,6 +854,8 @@ fun ProControlScreen(bleManager: BleManager, initialRoomName: String, viewModel:
     // UI
     BottomSheetScaffold(
         scaffoldState = scaffoldState,
+        // Attach nested scroll so the TopAppBar collapses
+        modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
         topBar = {
             LargeTopAppBar(
                 title = {
@@ -969,9 +863,7 @@ fun ProControlScreen(bleManager: BleManager, initialRoomName: String, viewModel:
                         Text(roomName, fontWeight = FontWeight.Bold)
                         if (connectionState == BleManager.ConnectionState.CONNECTED) {
                             Text(stringResource(R.string.connected), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-                        } else if (connectionState == BleManager.ConnectionState.CONNECTING) {
-                            Text(stringResource(R.string.scanning), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.tertiary)
-                        } else if (isScanning) {
+                        } else if (connectionState == BleManager.ConnectionState.CONNECTING || isScanning) {
                             Text(stringResource(R.string.scanning), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.tertiary)
                         } else {
                             Text(stringResource(R.string.disconnect), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.error)
@@ -989,7 +881,12 @@ fun ProControlScreen(bleManager: BleManager, initialRoomName: String, viewModel:
                             tint = if (connectionState == BleManager.ConnectionState.CONNECTED) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                         )
                     }
-                }
+                },
+                scrollBehavior = scrollBehavior,
+                colors = TopAppBarDefaults.largeTopAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background,
+                    scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer
+                )
             )
         },
         sheetDragHandle = null,
@@ -1005,6 +902,7 @@ fun ProControlScreen(bleManager: BleManager, initialRoomName: String, viewModel:
                         .padding(horizontal = 24.dp)
                         .padding(bottom = 32.dp),
                 ) {
+                    // Drag Handle Indicator
                     Box(
                         modifier = Modifier
                             .padding(vertical = 16.dp)
@@ -1024,35 +922,21 @@ fun ProControlScreen(bleManager: BleManager, initialRoomName: String, viewModel:
                             .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
                             .padding(horizontal = 20.dp, vertical = 6.dp)
                     ) {
-                        Icon(
-                            imageVector = Icons.Rounded.BrightnessLow,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(20.dp)
-                        )
-
+                        Icon(Icons.Rounded.BrightnessLow, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp))
                         Slider(
                             value = brightness,
                             onValueChange = {
                                 brightness = it
                                 if (!isPowerOn && it > 0) isPowerOn = true
                             },
-                            modifier = Modifier
-                                .weight(1f)
-                                .padding(horizontal = 8.dp),
+                            modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
                             colors = SliderDefaults.colors(
                                 thumbColor = MaterialTheme.colorScheme.primary,
                                 activeTrackColor = MaterialTheme.colorScheme.primary,
                                 inactiveTrackColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
                             )
                         )
-
-                        Icon(
-                            imageVector = Icons.Rounded.BrightnessHigh,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(20.dp)
-                        )
+                        Icon(Icons.Rounded.BrightnessHigh, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp))
                     }
 
                     Spacer(Modifier.height(32.dp))
@@ -1070,10 +954,7 @@ fun ProControlScreen(bleManager: BleManager, initialRoomName: String, viewModel:
                                         saturation = if (color == Color.White) 0f else 1f
                                         isPowerOn = true
                                         isDiscoMode = false
-
-                                        // Update Service Color
                                         AudioSyncService.selectedStaticColor = Color.hsv(h, if (color == Color.White) 0f else 1f, 1f).toArgb()
-                                        // Music is not stopped here
                                     }
                             )
                         }
@@ -1096,7 +977,6 @@ fun ProControlScreen(bleManager: BleManager, initialRoomName: String, viewModel:
 
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
                         item {
-                            // FIX 1: Use 'primary' (Violet) instead of 'tertiary'
                             PresetChip(
                                 stringResource(R.string.scene_disco),
                                 Icons.Rounded.AutoAwesome,
@@ -1107,23 +987,13 @@ fun ProControlScreen(bleManager: BleManager, initialRoomName: String, viewModel:
                         }
                         items(presets, key = { it.id }) { preset ->
                             val iconVector = try { PresetIcon.valueOf(preset.iconName).icon } catch (e: Exception) { Icons.Rounded.Lightbulb }
-
-                            // --- CORRECTION DU CONTRASTE ---
-                            val iconColor = if (preset.sat < 0.1f) {
-                                // Si la lumière est blanche :
-                                // On utilise la couleur du texte (Noir en mode clair, Blanc en mode sombre)
-                                // pour que l'icône reste toujours visible sur le fond de la carte.
-                                MaterialTheme.colorScheme.onSurface
-                            } else {
-                                // Si c'est une couleur (Rouge, Bleu...), on l'affiche telle quelle.
-                                Color.hsv(preset.hue, preset.sat, 1f)
-                            }
+                            val iconColor = if (preset.sat < 0.1f) MaterialTheme.colorScheme.onSurface else Color.hsv(preset.hue, preset.sat, 1f)
 
                             PresetChip(
                                 name = preset.name,
                                 icon = iconVector,
                                 color = iconColor,
-                                isSelected = false, // La gestion de la sélection se fait via le clic
+                                isSelected = false,
                                 onClick = {
                                     hue = preset.hue; saturation = preset.sat; brightness = preset.bri; isPowerOn = true; isDiscoMode = false; performHaptic()
                                     AudioSyncService.selectedStaticColor = Color.hsv(preset.hue, preset.sat, 1f).toArgb()
@@ -1138,15 +1008,9 @@ fun ProControlScreen(bleManager: BleManager, initialRoomName: String, viewModel:
     ) { innerPadding ->
         Column(modifier = Modifier.padding(innerPadding).fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
             Box(contentAlignment = Alignment.Center) {
-                // COLOR WHEEL
                 ColorWheel(Modifier.size(300.dp), brightness, hue, saturation) { h, s ->
                     hue = h; saturation = s; if (!isPowerOn) isPowerOn = true; isDiscoMode = false
-
-                    // --- IMPORTANT MODIF ---
-                    // Send color to Audio Service (ARGB)
                     AudioSyncService.selectedStaticColor = Color.hsv(h, s, 1f).toArgb()
-
-                    // WE DO NOT STOP MUSIC HERE (viewModel.stopMusicSync removed)
                 }
 
                 FilledIconToggleButton(
@@ -1217,78 +1081,6 @@ fun DeviceItem(scanResult: ScanResult, onClick: () -> Unit) {
             Icon(Icons.Rounded.Bluetooth, null, tint = MaterialTheme.colorScheme.onSurfaceVariant); Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) { Text(deviceName, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold); Text(scanResult.device.address, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline) }
             Column(horizontalAlignment = Alignment.End) { Icon(imageVector = Icons.Rounded.SignalWifi4Bar, contentDescription = null, modifier = Modifier.size(18.dp), tint = if (rssi > -70) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline); Text(stringResource(R.string.signal, rssi), style = MaterialTheme.typography.labelSmall) }
-        }
-    }
-}
-
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-fun SettingsDialog(roomName: String, onNameChange: (String) -> Unit, onDismiss: () -> Unit, viewModel: MainViewModel) {
-    val context = LocalContext.current
-    Dialog(onDismissRequest = onDismiss) {
-        Card(shape = RoundedCornerShape(28.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), modifier = Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(28.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(24.dp)) {
-                Text(stringResource(R.string.customization), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
-                OutlinedTextField(value = roomName, onValueChange = onNameChange, label = { Text(stringResource(R.string.room_name_label)) }, modifier = Modifier.fillMaxWidth(), singleLine = true, shape = RoundedCornerShape(16.dp))
-
-                Divider()
-
-                // AMOLED TOGGLE
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column {
-                        Text(stringResource(R.string.amoled_mode), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                        Text(stringResource(R.string.amoled_desc), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-
-                    // SWITCH MODIFIED WITH ICON
-                    Switch(
-                        checked = viewModel.isAmoledMode,
-                        onCheckedChange = { viewModel.toggleAmoled(it, context) },
-                        thumbContent = {
-                            if (viewModel.isAmoledMode) {
-                                Icon(
-                                    imageVector = Icons.Rounded.Check,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(SwitchDefaults.IconSize) // Recommended standard size
-                                )
-                            } else {
-                                Icon(
-                                    imageVector = Icons.Rounded.Close,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(SwitchDefaults.IconSize)
-                                )
-                            }
-                        }
-                    )
-                }
-
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                    Text(stringResource(R.string.language), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-                        val currentLocale = AppCompatDelegate.getApplicationLocales().toLanguageTags()
-                        FilterChip(selected = currentLocale.isEmpty(), onClick = { AppCompatDelegate.setApplicationLocales(LocaleListCompat.getEmptyLocaleList()) }, label = { Text(stringResource(R.string.system_default)) }, enabled = true)
-                        FilterChip(selected = currentLocale.contains("en"), onClick = { AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags("en")) }, label = { Text("English") }, enabled = true)
-                        FilterChip(selected = currentLocale.contains("fr"), onClick = { AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags("fr")) }, label = { Text("Français") }, enabled = true)
-                    }
-                }
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                Column(verticalArrangement = Arrangement.spacedBy(20.dp), horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
-                    Icon(Icons.Rounded.Code, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(40.dp))
-                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(stringResource(R.string.dev_passion), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                        Text(stringResource(R.string.dev_desc), style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 8.dp))
-                    }
-                    OutlinedButton(onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/alan7383"))) }, modifier = Modifier.fillMaxWidth(), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))) {
-                        Icon(Icons.Rounded.Link, null, Modifier.size(18.dp)); Spacer(Modifier.width(12.dp)); Text(stringResource(R.string.github_link))
-                    }
-                }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { TextButton(onClick = onDismiss) { Text(stringResource(R.string.close), style = MaterialTheme.typography.labelLarge) } }
-            }
         }
     }
 }
@@ -1368,12 +1160,8 @@ fun PresetChip(name: String, icon: ImageVector, color: Color, isSelected: Boolea
                 .size(60.dp)
                 .shadow(if (isSelected) 8.dp else 2.dp, RoundedCornerShape(20.dp))
                 .clip(RoundedCornerShape(20.dp))
-                // --- CHANGED HERE (Background) ---
-                // Before: tertiaryContainer (Pink) -> After: primaryContainer (Monet Blue)
                 .background(if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface)
                 .combinedClickable(onClick = onClick, onLongClick = onLongClick)
-                // --- CHANGED HERE (Border) ---
-                // Kept Primary border, but transparent if selected for cleaner look
                 .border(
                     width = if (isSelected) 2.dp else 1.dp,
                     color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
@@ -1381,13 +1169,7 @@ fun PresetChip(name: String, icon: ImageVector, color: Color, isSelected: Boolea
                 ),
             contentAlignment = Alignment.Center
         ) {
-            // --- CHANGED HERE (Icon) ---
-            // Before: onTertiaryContainer (Pink text) -> After: onPrimaryContainer (Blue text)
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                tint = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else color.copy(alpha = 1f)
-            )
+            Icon(imageVector = icon, contentDescription = null, tint = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else color.copy(alpha = 1f))
         }
         Spacer(Modifier.height(8.dp))
         Text(name, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
@@ -1395,13 +1177,7 @@ fun PresetChip(name: String, icon: ImageVector, color: Color, isSelected: Boolea
 }
 
 @Composable
-fun AddPresetDialog(
-    initialHue: Float,
-    initialSat: Float,
-    initialBri: Float,
-    onDismiss: () -> Unit,
-    onSave: (LightPreset) -> Unit
-) {
+fun AddPresetDialog(initialHue: Float, initialSat: Float, initialBri: Float, onDismiss: () -> Unit, onSave: (LightPreset) -> Unit) {
     var name by remember { mutableStateOf("") }
     var selectedIcon by remember { mutableStateOf(PresetIcon.HEART) }
     var hue by remember { mutableFloatStateOf(initialHue) }
@@ -1419,83 +1195,30 @@ fun AddPresetDialog(
     LaunchedEffect(hue, sat) { hexCode = getHex(hue, sat) }
 
     Dialog(onDismissRequest = onDismiss) {
-        Card(
-            shape = RoundedCornerShape(28.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(max = 700.dp) // Max height
-        ) {
-            Column(
-                modifier = Modifier.padding(24.dp)
-            ) {
-                Text(
-                    stringResource(R.string.new_preset_title),
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(bottom = 16.dp)
-                )
+        Card(shape = RoundedCornerShape(28.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), modifier = Modifier.fillMaxWidth().heightIn(max = 700.dp)) {
+            Column(modifier = Modifier.padding(24.dp)) {
+                Text(stringResource(R.string.new_preset_title), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 16.dp))
 
-                Column(
-                    modifier = Modifier
-                        .weight(1f, fill = false)
-                        .verticalScroll(rememberScrollState()),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(20.dp)
-                ) {
+                Column(modifier = Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(20.dp)) {
                     OutlinedTextField(
-                        value = name,
-                        onValueChange = { name = it },
-                        label = { Text(stringResource(R.string.room_name_label)) },
-                        singleLine = true,
-                        shape = RoundedCornerShape(16.dp),
-                        leadingIcon = { Icon(selectedIcon.icon, null) },
-                        modifier = Modifier.fillMaxWidth()
+                        value = name, onValueChange = { name = it }, label = { Text(stringResource(R.string.room_name_label)) },
+                        singleLine = true, shape = RoundedCornerShape(16.dp), leadingIcon = { Icon(selectedIcon.icon, null) }, modifier = Modifier.fillMaxWidth()
                     )
 
                     Box(contentAlignment = Alignment.Center) {
-                        ColorWheel(
-                            modifier = Modifier.size(220.dp),
-                            brightness = 1f,
-                            currentHue = hue,
-                            currentSat = sat
-                        ) { h, s ->
-                            hue = h
-                            sat = s
-                            focusManager.clearFocus()
-                        }
-                        Box(
-                            modifier = Modifier
-                                .size(50.dp)
-                                .shadow(8.dp, CircleShape)
-                                .background(Color.hsv(hue, sat, 1f), CircleShape)
-                                .border(2.dp, Color.White, CircleShape)
-                        )
+                        ColorWheel(modifier = Modifier.size(220.dp), brightness = 1f, currentHue = hue, currentSat = sat) { h, s -> hue = h; sat = s; focusManager.clearFocus() }
+                        Box(modifier = Modifier.size(50.dp).shadow(8.dp, CircleShape).background(Color.hsv(hue, sat, 1f), CircleShape).border(2.dp, Color.White, CircleShape))
                     }
 
-                    Card(
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
-                        shape = RoundedCornerShape(16.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Column(
-                            Modifier.padding(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
+                    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)), shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Rounded.Brightness6, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                                Spacer(Modifier.width(12.dp))
+                                Icon(Icons.Rounded.Brightness6, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant); Spacer(Modifier.width(12.dp))
                                 Slider(value = bri, onValueChange = { bri = it }, modifier = Modifier.weight(1f))
-                                Text(
-                                    "${(bri*100).toInt()}%",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    modifier = Modifier.width(35.dp),
-                                    textAlign = TextAlign.End
-                                )
+                                Text("${(bri*100).toInt()}%", style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(35.dp), textAlign = TextAlign.End)
                             }
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Rounded.Tag, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                                Spacer(Modifier.width(12.dp))
+                                Icon(Icons.Rounded.Tag, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant); Spacer(Modifier.width(12.dp))
                                 BasicTextField(
                                     value = hexCode,
                                     onValueChange = { input ->
@@ -1506,27 +1229,13 @@ fun AddPresetDialog(
                                                 val c = android.graphics.Color.parseColor(upper)
                                                 val h = FloatArray(3)
                                                 android.graphics.Color.colorToHSV(c, h)
-                                                hue = h[0]
-                                                sat = h[1]
-                                                hexError = false
+                                                hue = h[0]; sat = h[1]; hexError = false
                                             } catch (e: Exception) { hexError = true }
                                         }
                                     },
-                                    textStyle = MaterialTheme.typography.bodyMedium.copy(
-                                        color = if (hexError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
-                                        fontWeight = FontWeight.Bold
-                                    ),
+                                    textStyle = MaterialTheme.typography.bodyMedium.copy(color = if (hexError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold),
                                     singleLine = true,
-                                    decorationBox = { inner ->
-                                        Box(
-                                            Modifier
-                                                .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(8.dp))
-                                                .padding(horizontal = 12.dp, vertical = 8.dp)
-                                        ) {
-                                            if (hexCode.isEmpty()) Text("#", color = MaterialTheme.colorScheme.outline)
-                                            inner()
-                                        }
-                                    },
+                                    decorationBox = { inner -> Box(Modifier.background(MaterialTheme.colorScheme.surface, RoundedCornerShape(8.dp)).padding(horizontal = 12.dp, vertical = 8.dp)) { if (hexCode.isEmpty()) Text("#", color = MaterialTheme.colorScheme.outline); inner() } },
                                     modifier = Modifier.weight(1f)
                                 )
                             }
@@ -1535,72 +1244,32 @@ fun AddPresetDialog(
 
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(stringResource(R.string.choose_icon), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                        LazyRow(
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                            contentPadding = PaddingValues(horizontal = 4.dp)
-                        ) {
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(horizontal = 4.dp)) {
                             items(PresetIcon.values()) { icon ->
                                 val sel = selectedIcon == icon
-                                Column(
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    modifier = Modifier
-                                        .width(60.dp)
-                                        .clip(RoundedCornerShape(12.dp))
-                                        .clickable { selectedIcon = icon }
-                                        .padding(vertical = 8.dp)
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(48.dp)
-                                            .background(
-                                                if (sel) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHighest,
-                                                CircleShape
-                                            )
-                                            .border(if (sel) 2.dp else 0.dp, MaterialTheme.colorScheme.primary, CircleShape),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Icon(
-                                            icon.icon,
-                                            null,
-                                            tint = if (sel) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
+                                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(60.dp).clip(RoundedCornerShape(12.dp)).clickable { selectedIcon = icon }.padding(vertical = 8.dp)) {
+                                    Box(modifier = Modifier.size(48.dp).background(if (sel) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHighest, CircleShape).border(if (sel) 2.dp else 0.dp, MaterialTheme.colorScheme.primary, CircleShape), contentAlignment = Alignment.Center) { Icon(icon.icon, null, tint = if (sel) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant) }
                                     Spacer(Modifier.height(4.dp))
-                                    Text(
-                                        stringResource(icon.labelRes),
-                                        style = MaterialTheme.typography.labelSmall,
-                                        maxLines = 1,
-                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                                    )
+                                    Text(stringResource(icon.labelRes), style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                                 }
                             }
                         }
                     }
                 }
-
                 Spacer(Modifier.height(16.dp))
-
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End
-                ) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                     TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) }
                     Spacer(Modifier.width(8.dp))
-                    Button(
-                        onClick = {
-                            if (name.isNotBlank()) {
-                                onSave(LightPreset(name = name, hue = hue, sat = sat, bri = bri, iconName = selectedIcon.name))
-                            }
-                        },
-                        enabled = name.isNotBlank()
-                    ) {
-                        Text(stringResource(R.string.create))
-                    }
+                    Button(onClick = { if (name.isNotBlank()) onSave(LightPreset(name = name, hue = hue, sat = sat, bri = bri, iconName = selectedIcon.name)) }, enabled = name.isNotBlank()) { Text(stringResource(R.string.create)) }
                 }
             }
         }
     }
 }
+
+// ------------------------------------------------------------------------
+// --- SETTINGS SCREEN (UPDATED FOR M3) ---
+// ------------------------------------------------------------------------
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -1611,7 +1280,9 @@ fun SettingsScreen(
     onRoomNameChange: (String) -> Unit
 ) {
     val context = LocalContext.current
-    val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
+    // M3 Scroll Behavior for Collapsing Toolbar
+    val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
+
     var showRenameDialog by remember { mutableStateOf(false) }
     var showLanguageDialog by remember { mutableStateOf(false) }
     var showThemeDialog by remember { mutableStateOf(false) }
@@ -1624,7 +1295,7 @@ fun SettingsScreen(
     Scaffold(
         modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
         topBar = {
-            TopAppBar(
+            LargeTopAppBar(
                 title = { Text(stringResource(R.string.settings_title), fontWeight = FontWeight.Bold) },
                 navigationIcon = {
                     FilledTonalIconButton(
@@ -1637,7 +1308,11 @@ fun SettingsScreen(
                         Icon(Icons.Rounded.ArrowBack, contentDescription = null)
                     }
                 },
-                scrollBehavior = scrollBehavior
+                scrollBehavior = scrollBehavior,
+                colors = TopAppBarDefaults.largeTopAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background,
+                    scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer
+                )
             )
         },
         containerColor = MaterialTheme.colorScheme.background
@@ -1647,11 +1322,11 @@ fun SettingsScreen(
                 .fillMaxSize()
                 .padding(padding)
                 .padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(24.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
             contentPadding = PaddingValues(bottom = 32.dp, top = 16.dp)
         ) {
-            // ... (SECTION 1 & 2 inchangées) ...
-            // COPIEZ LES SECTIONS "GÉNÉRAL" ET "APPARENCE" TELLES QUELLES
+
+            // --- GENERAL SECTION ---
             item {
                 SettingsGroupTitle(stringResource(R.string.settings_category_general))
                 SettingsGroupCard {
@@ -1664,6 +1339,7 @@ fun SettingsScreen(
                 }
             }
 
+            // --- APPEARANCE SECTION ---
             item {
                 SettingsGroupTitle(stringResource(R.string.settings_category_appearance))
                 SettingsGroupCard {
@@ -1677,7 +1353,8 @@ fun SettingsScreen(
                         icon = Icons.Rounded.BrightnessMedium,
                         onClick = { showThemeDialog = true }
                     )
-                    Divider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f))
+
+                    // Native M3 ListItem Switch
                     SettingsItem(
                         title = stringResource(R.string.amoled_mode),
                         subtitle = stringResource(R.string.amoled_desc),
@@ -1686,7 +1363,7 @@ fun SettingsScreen(
                         switchState = viewModel.isAmoledMode,
                         onSwitchChange = { viewModel.toggleAmoled(it, context) }
                     )
-                    Divider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f))
+
                     SettingsItem(
                         title = stringResource(R.string.language),
                         subtitle = getCurrentLanguageName(),
@@ -1696,7 +1373,7 @@ fun SettingsScreen(
                 }
             }
 
-            // --- SECTION 3 : À PROPOS (Modifiée) ---
+            // --- ABOUT SECTION ---
             item {
                 SettingsGroupTitle(stringResource(R.string.settings_category_about))
                 SettingsGroupCard {
@@ -1708,13 +1385,11 @@ fun SettingsScreen(
                             versionClickCount++
                             if (versionClickCount >= 7) {
                                 versionClickCount = 0
-                                showEasterEggDialog = true // Ouvre le pop-up
+                                showEasterEggDialog = true
                             }
                         }
                     )
-                    Divider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f))
 
-                    // ... (Reste de la section About inchangé) ...
                     SettingsItem(
                         title = stringResource(R.string.dev_passion),
                         subtitle = stringResource(R.string.github_link),
@@ -1724,7 +1399,7 @@ fun SettingsScreen(
                             context.startActivity(intent)
                         }
                     )
-                    Divider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f))
+
                     SettingsItem(
                         title = stringResource(R.string.licenses),
                         subtitle = stringResource(R.string.licenses_desc),
@@ -1735,29 +1410,17 @@ fun SettingsScreen(
             }
         }
     }
-    if (showRenameDialog) {
-        RenameDialog(currentName = roomName, onDismiss = { showRenameDialog = false }) { newName ->
-            onRoomNameChange(newName)
-            showRenameDialog = false
-        }
-    }
+
+    // Dialogs
+    if (showRenameDialog) RenameDialog(currentName = roomName, onDismiss = { showRenameDialog = false }) { newName -> onRoomNameChange(newName); showRenameDialog = false }
     if (showLanguageDialog) LanguageSelectionDialog { showLanguageDialog = false }
-    if (showThemeDialog) {
-        ThemeSelectionDialog(viewModel.themeMode, { showThemeDialog = false }) {
-            viewModel.updateTheme(it, context)
-            showThemeDialog = false
-        }
-    }
-    if (showEasterEggDialog) {
-        EasterEggDialog(onDismiss = { showEasterEggDialog = false })
-    }
-    if (showLicensesDialog) {
-        LicensesScreen(onDismiss = { showLicensesDialog = false })
-    }
+    if (showThemeDialog) ThemeSelectionDialog(viewModel.themeMode, { showThemeDialog = false }) { viewModel.updateTheme(it, context); showThemeDialog = false }
+    if (showEasterEggDialog) EasterEggDialog(onDismiss = { showEasterEggDialog = false })
+    if (showLicensesDialog) LicensesScreen(onDismiss = { showLicensesDialog = false })
 }
 
 // ------------------------------------------------------------------------
-// --- FONCTIONS UTILITAIRES (DOIVENT ÊTRE À LA FIN DU FICHIER) ---
+// --- UTILITY COMPONENTS (NATIVE M3) ---
 // ------------------------------------------------------------------------
 
 @Composable
@@ -1771,11 +1434,18 @@ fun SettingsGroupTitle(text: String) {
     )
 }
 
+/**
+ * Modern Card container for settings.
+ * Uses `surfaceContainerHigh` (or fallback) to match Google Settings style.
+ */
 @Composable
 fun SettingsGroupCard(content: @Composable ColumnScope.() -> Unit) {
     Card(
         shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+        colors = CardDefaults.cardColors(
+            // Try to use 'surfaceContainerHigh' if available in your theme, otherwise use surfaceVariant
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+        ),
         elevation = CardDefaults.cardElevation(0.dp),
         modifier = Modifier.fillMaxWidth()
     ) {
@@ -1783,6 +1453,10 @@ fun SettingsGroupCard(content: @Composable ColumnScope.() -> Unit) {
     }
 }
 
+/**
+ * Wrapper around the official Material 3 ListItem.
+ * Provides standard heights, padding, and alignment.
+ */
 @Composable
 fun SettingsItem(
     title: String,
@@ -1793,41 +1467,30 @@ fun SettingsItem(
     switchState: Boolean = false,
     onSwitchChange: ((Boolean) -> Unit)? = null
 ) {
-    Row(
+    ListItem(
+        headlineContent = { Text(title, fontWeight = FontWeight.Medium) },
+        supportingContent = if (subtitle != null) { { Text(subtitle) } } else null,
+        leadingContent = if (icon != null) {
+            { Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant) }
+        } else null,
+        trailingContent = {
+            if (hasSwitch) {
+                Switch(
+                    checked = switchState,
+                    onCheckedChange = onSwitchChange
+                )
+            }
+            // Chevron is optional in M3, usually omitted inside grouped cards unless strictly nav
+        },
         modifier = Modifier
-            .fillMaxWidth()
             .clickable(enabled = onClick != null || hasSwitch) {
                 if (hasSwitch && onSwitchChange != null) onSwitchChange(!switchState)
                 else onClick?.invoke()
-            }
-            .padding(horizontal = 20.dp, vertical = 16.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        if (icon != null) {
-            Icon(icon, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(24.dp))
-            Spacer(modifier = Modifier.width(16.dp))
-        }
-        Column(modifier = Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
-            if (subtitle != null) {
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        }
-        if (hasSwitch) {
-            Switch(
-                checked = switchState,
-                onCheckedChange = onSwitchChange,
-                modifier = Modifier.padding(start = 12.dp)
-            )
-        } else if (onClick != null) {
-            Icon(
-                Icons.Rounded.KeyboardArrowRight,
-                null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-            )
-        }
-    }
+            },
+        colors = ListItemDefaults.colors(
+            containerColor = Color.Transparent // Maintains the card background
+        )
+    )
 }
 
 @Composable
@@ -1852,30 +1515,9 @@ fun LanguageSelectionDialog(onDismiss: () -> Unit) {
         title = { Text(stringResource(R.string.language)) },
         text = {
             Column {
-                LanguageOption(
-                    text = stringResource(R.string.system_default),
-                    selected = currentTag == "system",
-                    onClick = {
-                        AppCompatDelegate.setApplicationLocales(LocaleListCompat.getEmptyLocaleList())
-                        onDismiss()
-                    }
-                )
-                LanguageOption(
-                    text = "English",
-                    selected = currentTag == "en",
-                    onClick = {
-                        AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags("en"))
-                        onDismiss()
-                    }
-                )
-                LanguageOption(
-                    text = "Français",
-                    selected = currentTag == "fr",
-                    onClick = {
-                        AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags("fr"))
-                        onDismiss()
-                    }
-                )
+                LanguageOption(text = stringResource(R.string.system_default), selected = currentTag == "system") { AppCompatDelegate.setApplicationLocales(LocaleListCompat.getEmptyLocaleList()); onDismiss() }
+                LanguageOption(text = "English", selected = currentTag == "en") { AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags("en")); onDismiss() }
+                LanguageOption(text = "Français", selected = currentTag == "fr") { AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags("fr")); onDismiss() }
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } }
@@ -1883,31 +1525,15 @@ fun LanguageSelectionDialog(onDismiss: () -> Unit) {
 }
 
 @Composable
-fun ThemeSelectionDialog(
-    currentMode: Int,
-    onDismiss: () -> Unit,
-    onThemeSelected: (Int) -> Unit
-) {
+fun ThemeSelectionDialog(currentMode: Int, onDismiss: () -> Unit, onThemeSelected: (Int) -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.theme_title)) },
         text = {
             Column {
-                LanguageOption(
-                    text = stringResource(R.string.system_default),
-                    selected = currentMode == 0,
-                    onClick = { onThemeSelected(0) }
-                )
-                LanguageOption(
-                    text = stringResource(R.string.theme_light),
-                    selected = currentMode == 1,
-                    onClick = { onThemeSelected(1) }
-                )
-                LanguageOption(
-                    text = stringResource(R.string.theme_dark),
-                    selected = currentMode == 2,
-                    onClick = { onThemeSelected(2) }
-                )
+                LanguageOption(text = stringResource(R.string.system_default), selected = currentMode == 0) { onThemeSelected(0) }
+                LanguageOption(text = stringResource(R.string.theme_light), selected = currentMode == 1) { onThemeSelected(1) }
+                LanguageOption(text = stringResource(R.string.theme_dark), selected = currentMode == 2) { onThemeSelected(2) }
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } }
@@ -1917,10 +1543,7 @@ fun ThemeSelectionDialog(
 @Composable
 fun LanguageOption(text: String, selected: Boolean, onClick: () -> Unit) {
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(vertical = 12.dp, horizontal = 8.dp),
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 12.dp, horizontal = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         RadioButton(selected = selected, onClick = null)
@@ -1933,48 +1556,25 @@ fun getCurrentLanguageName(): String {
     val locale = AppCompatDelegate.getApplicationLocales().get(0) ?: Locale.getDefault()
     return locale.displayLanguage.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() }
 }
+
 @Composable
 fun EasterEggDialog(onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        icon = {
-            Icon(
-                Icons.Rounded.AutoAwesome, // Une icône sympa pour l'easter egg
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary
-            )
-        },
-        title = {
-            Text(
-                stringResource(R.string.dev_passion), // "Développeur" ou "Built with Passion"
-                fontWeight = FontWeight.Bold
-            )
-        },
-        text = {
-            Text(
-                stringResource(R.string.dev_desc), // Votre texte descriptif
-                textAlign = TextAlign.Center
-            )
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text(stringResource(R.string.close))
-            }
-        },
+        icon = { Icon(Icons.Rounded.AutoAwesome, null, tint = MaterialTheme.colorScheme.primary) },
+        title = { Text(stringResource(R.string.dev_passion), fontWeight = FontWeight.Bold) },
+        text = { Text(stringResource(R.string.dev_desc), textAlign = TextAlign.Center) },
+        confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.close)) } },
         containerColor = MaterialTheme.colorScheme.surface,
         tonalElevation = 6.dp
     )
 }
+
 // ------------------------------------------------------------------------
-// --- ÉCRAN DES LICENCES OPEN SOURCE ---
+// --- OPEN SOURCE LICENSES SCREEN ---
 // ------------------------------------------------------------------------
 
-data class OpenSourceLibrary(
-    val name: String,
-    val author: String,
-    val license: String = "Apache 2.0",
-    val url: String
-)
+data class OpenSourceLibrary(val name: String, val author: String, val license: String = "Apache 2.0", val url: String)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -1982,7 +1582,6 @@ fun LicensesScreen(onDismiss: () -> Unit) {
     val context = LocalContext.current
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
 
-    // LISTE DES LIBRAIRIES UTILISÉES
     val libraries = listOf(
         OpenSourceLibrary("Kotlin", "JetBrains", url = "https://kotlinlang.org/"),
         OpenSourceLibrary("AndroidX Core & AppCompat", "Google", url = "https://developer.android.com/jetpack/androidx"),
@@ -1992,46 +1591,22 @@ fun LicensesScreen(onDismiss: () -> Unit) {
         OpenSourceLibrary("Gson", "Google", url = "https://github.com/google/gson")
     )
 
-    // On utilise un Dialog plein écran pour simuler une "nouvelle page"
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = androidx.compose.ui.window.DialogProperties(
-            usePlatformDefaultWidth = false // Prend tout l'écran
-        )
-    ) {
+    Dialog(onDismissRequest = onDismiss, properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)) {
         Scaffold(
             topBar = {
                 TopAppBar(
                     title = { Text(stringResource(R.string.licenses_title), fontWeight = FontWeight.Bold) },
-                    navigationIcon = {
-                        IconButton(onClick = onDismiss) {
-                            Icon(Icons.Rounded.Close, contentDescription = stringResource(R.string.close))
-                        }
-                    },
-                    colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = MaterialTheme.colorScheme.surface,
-                        scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer
-                    ),
+                    navigationIcon = { IconButton(onClick = onDismiss) { Icon(Icons.Rounded.Close, contentDescription = stringResource(R.string.close)) } },
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface, scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer),
                     scrollBehavior = scrollBehavior
                 )
             },
             containerColor = MaterialTheme.colorScheme.surface
         ) { padding ->
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding)
-                    .nestedScroll(scrollBehavior.nestedScrollConnection),
-                contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
+            LazyColumn(modifier = Modifier.fillMaxSize().padding(padding).nestedScroll(scrollBehavior.nestedScrollConnection), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 items(libraries) { lib ->
-                    LicenseItem(lib) {
-                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(lib.url))
-                        context.startActivity(intent)
-                    }
+                    LicenseItem(lib) { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(lib.url))) }
                 }
-                // Petit espace à la fin
                 item { Spacer(Modifier.height(32.dp)) }
             }
         }
@@ -2040,46 +1615,15 @@ fun LicensesScreen(onDismiss: () -> Unit) {
 
 @Composable
 fun LicenseItem(library: OpenSourceLibrary, onClick: () -> Unit) {
-    Card(
-        onClick = onClick,
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-            contentColor = MaterialTheme.colorScheme.onSurface
-        ),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Row(
-            modifier = Modifier
-                .padding(16.dp)
-                .fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
+    Card(onClick = onClick, shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow, contentColor = MaterialTheme.colorScheme.onSurface), modifier = Modifier.fillMaxWidth()) {
+        Row(modifier = Modifier.padding(16.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = library.name,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
-                )
-                Text(
-                    text = stringResource(R.string.author, library.author),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Text(text = library.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text(text = stringResource(R.string.author, library.author), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(4.dp))
-                Text(
-                    text = library.license,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary
-                )
+                Text(text = library.license, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
             }
-            Icon(
-                imageVector = Icons.Rounded.OpenInNew,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-                modifier = Modifier.size(20.dp)
-            )
+            Icon(imageVector = Icons.Rounded.OpenInNew, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f), modifier = Modifier.size(20.dp))
         }
     }
 }

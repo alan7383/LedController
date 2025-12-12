@@ -114,4 +114,7 @@
     <string name="view_license">View License</string>
     <string name="author">By %1$s</string>
 
+    <string name="widget_dashboard_desc">Full Control Dashboard</string>
+    <string name="widget_toggle_desc">Simple Light Switch</string>
+
 </resources>

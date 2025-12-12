@@ -115,4 +115,7 @@
     <string name="view_license">Voir la licence</string>
     <string name="author">Par %1$s</string>
 
+    <string name="widget_dashboard_desc">Contrôle complet</string>
+    <string name="widget_toggle_desc">Interrupteur simple</string>
+
 </resources>
