@@ -106,7 +106,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
-import com.example.ledcontroller.AudioSyncService
+import com.example.ledcontroller.service.AudioSyncService
 import com.example.ledcontroller.R
 import com.example.ledcontroller.data.LightPreset
 import com.example.ledcontroller.data.PresetIcon

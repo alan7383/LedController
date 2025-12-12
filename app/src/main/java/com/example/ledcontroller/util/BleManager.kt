@@ -73,30 +73,13 @@ object BleManager {
             payload[5] = g.toByte()
             payload[6] = b.toByte()
 
-            // 1. Priorité App Principale
+            // 1. Priorité App Principale (Si l'app est ouverte, on utilise la connexion existante)
             if (_connectionState.value == ConnectionState.CONNECTED && bluetoothGatt != null) {
                 sendColor(r, g, b)
                 return@withContext true
             }
 
-            // 2. Smart Reuse (Réutilisation connexion Widget)
-            if (activeGatt != null) {
-                val service = activeGatt?.getService(BleConstants.SERVICE_UUID)
-                val characteristic = service?.getCharacteristic(BleConstants.CHARACTERISTIC_CMD_UUID)
-
-                if (characteristic != null) {
-                    try {
-                        val success = writeCharacteristicCompat(activeGatt!!, characteristic, payload)
-                        if (success) return@withContext true
-                    } catch (e: Exception) {
-                        Log.e("BleManager", "Reuse failed")
-                    }
-                }
-                activeGatt?.close()
-                activeGatt = null
-            }
-
-            // 3. Nouvelle Connexion
+            // 2. Si pas connecté, on tente une connexion "One Shot" ultra-rapide
             if (targetDeviceAddress == null) {
                 val prefs = context.getSharedPreferences("LedControllerPrefs", Context.MODE_PRIVATE)
                 targetDeviceAddress = prefs.getString("last_device_address", null)
@@ -104,15 +87,17 @@ object BleManager {
             val address = targetDeviceAddress ?: return@withContext false
             val device = bluetoothAdapter?.getRemoteDevice(address) ?: return@withContext false
 
-            return@withContext withTimeoutOrNull(3000) {
+            return@withContext withTimeoutOrNull(2500) { // Timeout réduit pour ne pas bloquer
                 suspendCancellableCoroutine<Boolean> { continuation ->
                     val oneShotCallback = object : BluetoothGattCallback() {
                         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
                             if (newState == BluetoothProfile.STATE_CONNECTED) {
-                                gatt.discoverServices()
+                                // OPTIMISATION 1 : Priorité MAXIMALE immédiate
                                 gatt.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH)
+                                // On lance la découverte tout de suite
+                                gatt.discoverServices()
                             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                                if (activeGatt == gatt) activeGatt = null
+                                gatt.close()
                                 if (continuation.isActive) continuation.resume(false)
                             }
                         }
@@ -123,19 +108,47 @@ object BleManager {
                                 val characteristic = service?.getCharacteristic(BleConstants.CHARACTERISTIC_CMD_UUID)
 
                                 if (characteristic != null) {
-                                    val success = writeCharacteristicCompat(gatt, characteristic, payload)
-                                    activeGatt = gatt // On garde la connexion
+                                    // OPTIMISATION 2 : Écriture "SANS RÉPONSE" (Plus rapide)
+                                    val success = writeCharacteristicFast(gatt, characteristic, payload)
+
+                                    // On ferme proprement après l'envoi pour économiser la batterie
+                                    // (Petit délai pour s'assurer que le paquet est parti)
+                                    android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                                        gatt.disconnect()
+                                        gatt.close()
+                                    }, 500)
+
                                     if (continuation.isActive) continuation.resume(success)
                                 } else {
+                                    gatt.disconnect()
                                     if (continuation.isActive) continuation.resume(false)
                                 }
                             }
                         }
                     }
-                    activeGatt = device.connectGatt(context, false, oneShotCallback)
+
+                    // OPTIMISATION 3 : autoConnect = false pour forcer la connexion immédiate
+                    device.connectGatt(context, false, oneShotCallback)
                 }
             } ?: false
         }
+    }
+
+    // Nouvelle fonction utilitaire pour l'écriture rapide
+    @SuppressLint("MissingPermission")
+    private fun writeCharacteristicFast(gatt: BluetoothGatt, char: BluetoothGattCharacteristic, payload: ByteArray): Boolean {
+        return try {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                // Sur Android 13+, on force le mode NO_RESPONSE explicitement
+                val code = gatt.writeCharacteristic(char, payload, BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE)
+                code == BluetoothStatusCodes.SUCCESS
+            } else {
+                // Sur les anciennes versions
+                char.value = payload
+                char.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+                gatt.writeCharacteristic(char)
+            }
+        } catch (e: Exception) { false }
     }
 
     @SuppressLint("MissingPermission")

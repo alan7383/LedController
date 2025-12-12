@@ -1,4 +1,4 @@
-package com.example.ledcontroller
+package com.example.ledcontroller.service
 
 import android.annotation.SuppressLint
 import android.app.NotificationChannel
@@ -15,16 +15,18 @@ import android.media.MediaRecorder
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
+import android.os.Process
 import androidx.core.app.NotificationCompat
+import com.example.ledcontroller.R
 import com.example.ledcontroller.util.BleManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
-import kotlin.math.sqrt
-import java.util.Random
 import java.util.LinkedList
+import java.util.Random
+import kotlin.math.sqrt
 
 class AudioSyncService : Service() {
 
@@ -51,12 +53,12 @@ class AudioSyncService : Service() {
         createNotificationChannel()
 
         // 1. Initialize WakeLock
-        val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+        val powerManager = getSystemService(POWER_SERVICE) as PowerManager
         wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "LedController:AudioSyncWakeLock")
 
         // 2. RETRIEVE LAST COLOR (To avoid starting with white flash)
         try {
-            val prefs = getSharedPreferences("LedControllerPrefs", Context.MODE_PRIVATE)
+            val prefs = getSharedPreferences("LedControllerPrefs", MODE_PRIVATE)
             val savedHue = prefs.getFloat("saved_hue", 0f)
             val savedSat = prefs.getFloat("saved_sat", 0f)
 
@@ -138,7 +140,7 @@ class AudioSyncService : Service() {
     private fun startAudioProcess() {
         audioJob = serviceScope.launch(Dispatchers.Default) {
             // MAX Audio Priority to prevent cuts
-            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_URGENT_AUDIO)
+            Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO)
 
             val sampleRate = 44100
             // Optimized buffer (2048 for reactivity, min 4096 for stability)
@@ -148,7 +150,13 @@ class AudioSyncService : Service() {
             var audioRecord: AudioRecord? = null
 
             try {
-                audioRecord = AudioRecord(MediaRecorder.AudioSource.MIC, sampleRate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, bufferSize)
+                audioRecord = AudioRecord(
+                    MediaRecorder.AudioSource.MIC,
+                    sampleRate,
+                    AudioFormat.CHANNEL_IN_MONO,
+                    AudioFormat.ENCODING_PCM_16BIT,
+                    bufferSize
+                )
                 audioRecord.startRecording()
 
                 val buffer = ShortArray(bufferSize)

@@ -32,11 +32,13 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
-import com.example.ledcontroller.AudioSyncService
+import com.example.ledcontroller.service.AudioSyncService
 import com.example.ledcontroller.R
 import com.example.ledcontroller.viewmodel.MainViewModel
 import com.example.ledcontroller.ui.components.VisualizerView
 import com.example.ledcontroller.ui.components.PermissionRequestUI
+import android.app.Activity
+import android.view.WindowManager
 
 // Helper function to check notification access
 // Ideally move this to a util file like com.example.ledcontroller.util.PermissionUtils.kt
@@ -51,6 +53,17 @@ fun isNotificationServiceEnabled(context: android.content.Context): Boolean {
 @Composable
 fun MusicSyncScreen(viewModel: MainViewModel) {
     val context = LocalContext.current
+
+    DisposableEffect(Unit) {
+        val window = (context as? Activity)?.window
+        window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+
+        onDispose {
+            window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+    }
+    // -----------------------------------------
+
     var hasAudioPermission by remember { mutableStateOf(ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) }
     var hasNotificationAccess by remember { mutableStateOf(isNotificationServiceEnabled(context)) }
 

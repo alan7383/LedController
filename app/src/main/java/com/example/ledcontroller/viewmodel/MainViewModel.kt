@@ -10,8 +10,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.ledcontroller.AudioSyncService
-import com.example.ledcontroller.MusicStateRepo
+import com.example.ledcontroller.service.AudioSyncService
+import com.example.ledcontroller.service.MusicStateRepo
 import com.example.ledcontroller.util.BleManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay

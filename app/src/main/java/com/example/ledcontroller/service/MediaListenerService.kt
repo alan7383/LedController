@@ -1,7 +1,6 @@
-package com.example.ledcontroller
+package com.example.ledcontroller.service
 
 import android.content.ComponentName
-import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.ImageDecoder
@@ -16,7 +15,6 @@ import android.util.Log
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import java.io.IOException
 
 // --- REPOSITORY (Bridge between Service and UI) ---
 object MusicStateRepo {
@@ -71,7 +69,7 @@ class MediaListenerService : NotificationListenerService() {
     }
 
     private fun initMediaSessionListener() {
-        val sessionManager = getSystemService(Context.MEDIA_SESSION_SERVICE) as MediaSessionManager
+        val sessionManager = getSystemService(MEDIA_SESSION_SERVICE) as MediaSessionManager
         val componentName = ComponentName(this, MediaListenerService::class.java)
 
         try {
