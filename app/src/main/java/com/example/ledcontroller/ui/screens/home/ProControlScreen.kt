@@ -1,6 +1,5 @@
 package com.example.ledcontroller.ui.screens.home
 
-// ... (Imports standard - inchangés) ...
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
@@ -137,10 +136,6 @@ fun ProControlScreen(
     viewModel: MainViewModel,
     onOpenSettings: () -> Unit
 ) {
-    // ... (Code logic remains identical, only comments change) ...
-    // Note: I am abbreviating the middle logic to fit in the response block effectively
-    // as only the DeviceSelectionDialog changed significantly.
-    // BUT since you asked for the FULL file for GitHub, I will include the key parts.
 
     val context = LocalContext.current
     val view = LocalView.current
