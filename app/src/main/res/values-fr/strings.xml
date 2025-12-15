@@ -76,6 +76,7 @@
     <string name="devices_title">Appareils</string>
     <string name="scanning_desc">Recherche de LEDs compatibles...</string>
     <string name="unknown_device">Appareil Inconnu</string>
+    <string name="unknown_device_default">Appareil Inconnu</string>
     <string name="close">Fermer</string>
     <string name="signal">Signal : %1$d dBm</string>
 
@@ -117,5 +118,11 @@
 
     <string name="widget_dashboard_desc">Contrôle complet</string>
     <string name="widget_toggle_desc">Interrupteur simple</string>
+
+    <string name="my_devices_header">Mes Appareils</string>
+    <string name="other_devices_header">Autres appareils</string>
+    <string name="link_device">Lier</string>
+    <string name="detected_status">Détecté</string>
+    <string name="devices_icon_desc">Appareils</string>
 
 </resources>

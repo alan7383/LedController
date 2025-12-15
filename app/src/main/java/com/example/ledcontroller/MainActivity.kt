@@ -6,7 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
-import androidx.activity.ComponentActivity
+import androidx.appcompat.app.AppCompatActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -36,8 +36,11 @@ import com.example.ledcontroller.util.BleManager
 import com.example.ledcontroller.viewmodel.MainViewModel
 import com.example.ledcontroller.ui.theme.AppTheme
 
-// --- POINT D'ENTRÉE DE L'APPLICATION ---
-class MainActivity : ComponentActivity() {
+/**
+ * Main Entry Point of the Application.
+ * Handles navigation, theme setup, and lifecycle events for Bluetooth management.
+ */
+class MainActivity : AppCompatActivity() {
     private val viewModel: MainViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -45,8 +48,8 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
 
         setContent {
-            // Utilisation du thème défini dans ui/theme/Theme.kt
-            // Note: Assure-toi que AppTheme est bien accessible ou utilise le code ci-dessous
+            // Apply the custom application theme defined in ui/theme/Theme.kt
+            // Includes support for Dark Mode, Dynamic Colors, and AMOLED blacks
             AppTheme(themeMode = viewModel.themeMode, useAmoled = viewModel.isAmoledMode) {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     MainAppContent(viewModel)
@@ -56,7 +59,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-// Enum pour la navigation simple
+// Simple navigation enum representing the top-level screens
 enum class AppScreen { Home, Settings }
 
 @Composable
@@ -64,29 +67,35 @@ fun MainAppContent(viewModel: MainViewModel) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val sharedPref = remember { context.getSharedPreferences("LedControllerPrefs", Context.MODE_PRIVATE) }
+
+    // Check if the user has completed the initial onboarding (Room Name setup)
     var isSetupDone by remember { mutableStateOf(sharedPref.getBoolean("is_setup_done", false)) }
 
     // Navigation State
     var currentScreen by remember { mutableStateOf(AppScreen.Home) }
 
-    // Bluetooth Launcher logic
+    // Bluetooth Permission & Enable Launcher
     val enableBluetoothLauncher = rememberLauncherForActivityResult(contract = ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == Activity.RESULT_OK) viewModel.bleManager.startScan(manual = false)
     }
     val bluetoothAdapter = remember { BluetoothAdapter.getDefaultAdapter() }
 
-    // Gestion du cycle de vie (Scanning auto au retour sur l'app)
+    // --- Lifecycle Management ---
+    // Automatically triggers a scan or reconnection attempt when the app resumes.
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME && isSetupDone) {
-                // On vérifie les permissions définies dans MainActivity ou un fichier utilitaire
-                // Pour simplifier ici, on assume que la logique est gérée
+                // Ensure all necessary permissions are granted before attempting BLE operations
                 if (checkPermissions(context)) {
                     if (bluetoothAdapter?.isEnabled == false) {
+                        // Prompt user to enable Bluetooth if it's off
                         val enableBtIntent = Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
                         enableBluetoothLauncher.launch(enableBtIntent)
                     } else if (viewModel.bleManager.connectionState.value == BleManager.ConnectionState.DISCONNECTED) {
-                        if (viewModel.bleManager.targetDeviceAddress != null) viewModel.bleManager.startScan(manual = false)
+                        // If previously connected to a specific device, try to find it again
+                        if (viewModel.bleManager.targetDeviceAddress != null) {
+                            viewModel.bleManager.startScan(manual = false)
+                        }
                     }
                 }
             }
@@ -95,12 +104,14 @@ fun MainAppContent(viewModel: MainViewModel) {
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
+    // --- Main UI Content ---
     if (!isSetupDone) {
         OnboardingScreen { name ->
             sharedPref.edit().putBoolean("is_setup_done", true).putString("room_name", name).apply()
             isSetupDone = true
         }
     } else {
+        // Handle transitions between Home and Settings screens
         AnimatedContent(
             targetState = currentScreen,
             label = "NavTransition",
@@ -174,9 +185,13 @@ fun HomeScreenWithBottomNav(viewModel: MainViewModel, roomName: String, onOpenSe
     }
 }
 
-// Fonction utilitaire à garder dans MainActivity ou un fichier Utils
+/**
+ * Utility function to check if required runtime permissions are granted.
+ * Handles differences between Android 12+ (S) and older versions.
+ */
 fun checkPermissions(context: Context): Boolean {
     val hasLocation = androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.ACCESS_FINE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
     return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
         androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.BLUETOOTH_SCAN) == android.content.pm.PackageManager.PERMISSION_GRANTED &&
                 androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.BLUETOOTH_CONNECT) == android.content.pm.PackageManager.PERMISSION_GRANTED &&

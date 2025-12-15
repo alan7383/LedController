@@ -44,7 +44,8 @@
     <string name="delete_confirm">Permanently delete "%1$s"?</string>
     <string name="delete">Delete</string>
 
-    <string name="preset_white">Focus</string> <string name="preset_reading">Reading</string>
+    <string name="preset_white">Focus</string>
+    <string name="preset_reading">Reading</string>
     <string name="preset_cinema">Cinema</string>
     <string name="preset_night">Night</string>
     <string name="preset_gaming">Gaming</string>
@@ -75,6 +76,7 @@
     <string name="devices_title">Devices</string>
     <string name="scanning_desc">Looking for compatible LEDs...</string>
     <string name="unknown_device">Unknown Device</string>
+    <string name="unknown_device_default">Unknown Device</string>
     <string name="close">Close</string>
     <string name="signal">Signal: %1$d dBm</string>
 
@@ -116,5 +118,11 @@
 
     <string name="widget_dashboard_desc">Full Control Dashboard</string>
     <string name="widget_toggle_desc">Simple Light Switch</string>
+
+    <string name="my_devices_header">My Devices</string>
+    <string name="other_devices_header">Available Devices</string>
+    <string name="link_device">Link</string>
+    <string name="detected_status">Detected</string>
+    <string name="devices_icon_desc">Devices</string>
 
 </resources>

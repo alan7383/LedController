@@ -9,32 +9,48 @@ import android.content.Context
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.ParcelUuid
 import android.util.Log
+import com.example.ledcontroller.R
+import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import java.util.UUID
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlinx.coroutines.withTimeoutOrNull
+import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.resume
+
+// Simple data class for device persistence
+data class SavedDevice(val name: String, val address: String)
 
 object BleConstants {
     val SERVICE_UUID: UUID = UUID.fromString("0000fff0-0000-1000-8000-00805f9b34fb")
     val CHARACTERISTIC_CMD_UUID: UUID = UUID.fromString("0000fff3-0000-1000-8000-00805f9b34fb")
+    // Alternative UUIDs for generic controllers
+    val SERVICE_UUID_ALT_1: UUID = UUID.fromString("0000ffe0-0000-1000-8000-00805f9b34fb")
+    val SERVICE_UUID_ALT_2: UUID = UUID.fromString("0000ae00-0000-1000-8000-00805f9b34fb")
 }
 
 object BleManager {
 
     private var bluetoothManager: BluetoothManager? = null
     private var bluetoothAdapter: BluetoothAdapter? = null
-    private var bluetoothGatt: BluetoothGatt? = null
-    private var commandCharacteristic: BluetoothGattCharacteristic? = null
     private val mainHandler = Handler(Looper.getMainLooper())
     private var context: Context? = null
+    private val gson = Gson()
 
-    // Connexion statique dédiée au Widget
-    private var activeGatt: BluetoothGatt? = null
+    // Target address for auto-reconnection (used by MainActivity)
+    var targetDeviceAddress: String? = null
+
+    // Track if scan was triggered manually to avoid auto-connect conflicts
+    private var isManualScan = false
+
+    // --- STATE MANAGEMENT ---
+
+    // Thread-safe map for multiple active connections
+    private val activeConnections = ConcurrentHashMap<String, BluetoothGatt>()
+    private val activeCharacteristics = ConcurrentHashMap<String, BluetoothGattCharacteristic>()
 
     private val _connectionState = MutableStateFlow(ConnectionState.DISCONNECTED)
     val connectionState: StateFlow<ConnectionState> = _connectionState
@@ -42,240 +58,360 @@ object BleManager {
     private val _isScanning = MutableStateFlow(false)
     val isScanning: StateFlow<Boolean> = _isScanning
 
-    private val _connectedDevice = MutableStateFlow<BluetoothDevice?>(null)
-    val connectedDevice: StateFlow<BluetoothDevice?> = _connectedDevice
+    private val _connectedDevices = MutableStateFlow<List<BluetoothDevice>>(emptyList())
+    val connectedDevices: StateFlow<List<BluetoothDevice>> = _connectedDevices
 
     private val _scannedDevices = MutableStateFlow<List<ScanResult>>(emptyList())
     val scannedDevices: StateFlow<List<ScanResult>> = _scannedDevices
 
-    var targetDeviceAddress: String? = null
-    private var isManualScan = false
-    private var lastUiUpdate = 0L
+    private val _knownDevices = MutableStateFlow<List<SavedDevice>>(emptyList())
+    val knownDevices: StateFlow<List<SavedDevice>> = _knownDevices
 
     enum class ConnectionState { DISCONNECTED, CONNECTING, CONNECTED }
+
+    // AllowList for "Intelligent Scan" filtering
+    private val KNOWN_LED_NAMES = listOf(
+        "LED", "Light", "Lotus", "Happy", "ELK", "BLEDOM", "Triones",
+        "QHM", "JTY", "OA", "duoCo", "Melpo", "Ks", "Marvel", "Zengge"
+    )
+
+    // --- INITIALIZATION ---
 
     fun init(ctx: Context) {
         if (context == null) {
             context = ctx.applicationContext
             bluetoothManager = context?.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
             bluetoothAdapter = bluetoothManager?.adapter
+
+            // Load persisted devices
+            loadKnownDevices()
+
+            // Load target address but do NOT connect immediately.
+            // We rely on MainActivity to start the scan or connection flow.
+            val prefs = context?.getSharedPreferences("LedControllerPrefs", Context.MODE_PRIVATE)
+            targetDeviceAddress = prefs?.getString("last_device_address", null)
         }
     }
 
-    @SuppressLint("MissingPermission")
-    suspend fun executeCommand(context: Context, r: Int, g: Int, b: Int): Boolean {
-        // Exécution en thread IO pour fluidité maximale
-        return withContext(Dispatchers.IO) {
-            init(context)
+    // --- PERSISTENCE LOGIC ---
 
-            val payload = byteArrayOf(0x7E.toByte(), 0x00, 0x05, 0x03, 0x00, 0x00, 0x00, 0x00, 0xEF.toByte())
-            payload[4] = r.toByte()
-            payload[5] = g.toByte()
-            payload[6] = b.toByte()
-
-            // 1. Priorité App Principale (Si l'app est ouverte, on utilise la connexion existante)
-            if (_connectionState.value == ConnectionState.CONNECTED && bluetoothGatt != null) {
-                sendColor(r, g, b)
-                return@withContext true
-            }
-
-            // 2. Si pas connecté, on tente une connexion "One Shot" ultra-rapide
-            if (targetDeviceAddress == null) {
-                val prefs = context.getSharedPreferences("LedControllerPrefs", Context.MODE_PRIVATE)
-                targetDeviceAddress = prefs.getString("last_device_address", null)
-            }
-            val address = targetDeviceAddress ?: return@withContext false
-            val device = bluetoothAdapter?.getRemoteDevice(address) ?: return@withContext false
-
-            return@withContext withTimeoutOrNull(2500) { // Timeout réduit pour ne pas bloquer
-                suspendCancellableCoroutine<Boolean> { continuation ->
-                    val oneShotCallback = object : BluetoothGattCallback() {
-                        override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
-                            if (newState == BluetoothProfile.STATE_CONNECTED) {
-                                // OPTIMISATION 1 : Priorité MAXIMALE immédiate
-                                gatt.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH)
-                                // On lance la découverte tout de suite
-                                gatt.discoverServices()
-                            } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                                gatt.close()
-                                if (continuation.isActive) continuation.resume(false)
-                            }
-                        }
-
-                        override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
-                            if (status == BluetoothGatt.GATT_SUCCESS) {
-                                val service = gatt.getService(BleConstants.SERVICE_UUID)
-                                val characteristic = service?.getCharacteristic(BleConstants.CHARACTERISTIC_CMD_UUID)
-
-                                if (characteristic != null) {
-                                    // OPTIMISATION 2 : Écriture "SANS RÉPONSE" (Plus rapide)
-                                    val success = writeCharacteristicFast(gatt, characteristic, payload)
-
-                                    // On ferme proprement après l'envoi pour économiser la batterie
-                                    // (Petit délai pour s'assurer que le paquet est parti)
-                                    android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                                        gatt.disconnect()
-                                        gatt.close()
-                                    }, 500)
-
-                                    if (continuation.isActive) continuation.resume(success)
-                                } else {
-                                    gatt.disconnect()
-                                    if (continuation.isActive) continuation.resume(false)
-                                }
-                            }
-                        }
-                    }
-
-                    // OPTIMISATION 3 : autoConnect = false pour forcer la connexion immédiate
-                    device.connectGatt(context, false, oneShotCallback)
-                }
-            } ?: false
+    private fun loadKnownDevices() {
+        val prefs = context?.getSharedPreferences("LedControllerPrefs", Context.MODE_PRIVATE) ?: return
+        val json = prefs.getString("known_devices_list", null)
+        if (json != null) {
+            val type = object : TypeToken<List<SavedDevice>>() {}.type
+            _knownDevices.value = gson.fromJson(json, type)
         }
     }
 
-    // Nouvelle fonction utilitaire pour l'écriture rapide
-    @SuppressLint("MissingPermission")
-    private fun writeCharacteristicFast(gatt: BluetoothGatt, char: BluetoothGattCharacteristic, payload: ByteArray): Boolean {
-        return try {
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
-                // Sur Android 13+, on force le mode NO_RESPONSE explicitement
-                val code = gatt.writeCharacteristic(char, payload, BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE)
-                code == BluetoothStatusCodes.SUCCESS
-            } else {
-                // Sur les anciennes versions
-                char.value = payload
-                char.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
-                gatt.writeCharacteristic(char)
-            }
-        } catch (e: Exception) { false }
+    private fun saveDeviceToMemory(device: BluetoothDevice) {
+        val currentList = _knownDevices.value.toMutableList()
+        // Avoid duplicates based on MAC address
+        if (currentList.none { it.address == device.address }) {
+            @SuppressLint("MissingPermission")
+            val name = device.name ?: context?.getString(R.string.unknown_device) ?: "Device"
+
+            currentList.add(SavedDevice(name, device.address))
+            _knownDevices.value = currentList
+
+            val prefs = context?.getSharedPreferences("LedControllerPrefs", Context.MODE_PRIVATE)
+            prefs?.edit()?.putString("known_devices_list", gson.toJson(currentList))?.apply()
+        }
     }
 
-    @SuppressLint("MissingPermission")
-    private fun writeCharacteristicCompat(gatt: BluetoothGatt, char: BluetoothGattCharacteristic, payload: ByteArray): Boolean {
-        return try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                val code = gatt.writeCharacteristic(char, payload, BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE)
-                code == BluetoothStatusCodes.SUCCESS
-            } else {
-                char.value = payload
-                char.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
-                gatt.writeCharacteristic(char)
-            }
-        } catch (e: Exception) { false }
+    fun removeKnownDevice(address: String) {
+        val currentList = _knownDevices.value.toMutableList()
+        currentList.removeAll { it.address == address }
+        _knownDevices.value = currentList
+
+        val prefs = context?.getSharedPreferences("LedControllerPrefs", Context.MODE_PRIVATE)
+        prefs?.edit()?.putString("known_devices_list", gson.toJson(currentList))?.apply()
+
+        // If currently connected, disconnect it
+        val gatt = activeConnections[address]
+        gatt?.disconnect()
     }
 
-    // --- RESTE DU CODE STANDARD ---
-    @SuppressLint("MissingPermission")
-    fun ensureConnection(context: Context, onConnected: () -> Unit) {
-        if (bluetoothGatt != null && _connectionState.value == ConnectionState.CONNECTED) {
-            onConnected()
-            return
-        }
-        init(context)
-        if (targetDeviceAddress == null) {
-            val prefs = context.getSharedPreferences("LedControllerPrefs", Context.MODE_PRIVATE)
-            targetDeviceAddress = prefs.getString("last_device_address", null)
-        }
-        val address = targetDeviceAddress ?: return
-        try {
-            val device = bluetoothAdapter?.getRemoteDevice(address)
-            if (device != null) {
-                connectToDevice(device)
-                mainHandler.postDelayed({ onConnected() }, 1500)
-            }
-        } catch (e: Exception) { Log.e("BleManager", "Erreur reconnexion widget", e) }
+    // --- INTELLIGENT SCANNING ---
+
+    private fun isLedController(result: ScanResult): Boolean {
+        val device = result.device
+
+        // 1. Priority: Previous target or known device
+        if (targetDeviceAddress != null && device.address == targetDeviceAddress) return true
+        if (_knownDevices.value.any { it.address == device.address }) return true
+
+        // 2. Filter by Name (AllowList)
+        val name = device.name ?: result.scanRecord?.deviceName
+        if (!name.isNullOrEmpty() && KNOWN_LED_NAMES.any { name.contains(it, ignoreCase = true) }) return true
+
+        // 3. Filter by Service UUID
+        val uuids = result.scanRecord?.serviceUuids ?: return false
+        val knownUuids = listOf(
+            ParcelUuid(BleConstants.SERVICE_UUID),
+            ParcelUuid(BleConstants.SERVICE_UUID_ALT_1),
+            ParcelUuid(BleConstants.SERVICE_UUID_ALT_2)
+        )
+        return uuids.any { it in knownUuids }
     }
 
     @SuppressLint("MissingPermission")
     fun startScan(manual: Boolean = false) {
         if (bluetoothAdapter?.isEnabled == false) return
-        if (!manual && targetDeviceAddress != null && bluetoothManager != null) {
-            try {
-                val connectedDevices = bluetoothManager!!.getConnectedDevices(BluetoothProfile.GATT)
-                val existingDevice = connectedDevices.find { it.address == targetDeviceAddress }
-                if (existingDevice != null) {
-                    connectToDevice(existingDevice)
-                    return
-                }
-            } catch (e: Exception) { }
-        }
-        if (_isScanning.value && !manual) return
-        if (_isScanning.value) stopScan()
+
         isManualScan = manual
-        if (manual) { _scannedDevices.value = emptyList(); lastUiUpdate = 0L }
+
+        // Clear list only on manual refresh to avoid UI flickering during auto-reconnect
+        if (manual) _scannedDevices.value = emptyList()
+
+        if (_isScanning.value) stopScan()
+
         val scanner = bluetoothAdapter?.bluetoothLeScanner
+        // Low Latency for faster discovery
         val settings = ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build()
+
         _isScanning.value = true
         mainHandler.removeCallbacksAndMessages(null)
-        mainHandler.postDelayed({ if (_isScanning.value) stopScan() }, 10000)
-        try { scanner?.startScan(null, settings, scanCallback) } catch (e: Exception) { _isScanning.value = false }
+
+        // Timeout safety (12s)
+        mainHandler.postDelayed({ if (_isScanning.value) stopScan() }, 12000)
+
+        try {
+            scanner?.startScan(null, settings, scanCallback)
+        } catch (e: Exception) {
+            _isScanning.value = false
+            Log.e("BleManager", "Scan start failed", e)
+        }
     }
 
     @SuppressLint("MissingPermission")
-    fun stopScan() { try { _isScanning.value = false; bluetoothAdapter?.bluetoothLeScanner?.stopScan(scanCallback) } catch (e: Exception) {} }
-
-    @SuppressLint("MissingPermission")
-    fun disconnect() {
-        bluetoothGatt?.disconnect(); bluetoothGatt?.close(); bluetoothGatt = null
-        activeGatt?.close(); activeGatt = null
-        _connectedDevice.value = null
-        _connectionState.value = ConnectionState.DISCONNECTED
-    }
-
-    @SuppressLint("MissingPermission")
-    fun connectToDevice(device: BluetoothDevice) {
-        stopScan(); _connectionState.value = ConnectionState.CONNECTING; _connectedDevice.value = device
-        mainHandler.removeCallbacksAndMessages(null); bluetoothGatt?.close()
-        bluetoothGatt = device.connectGatt(context, false, gattCallback)
+    fun stopScan() {
+        try {
+            _isScanning.value = false
+            bluetoothAdapter?.bluetoothLeScanner?.stopScan(scanCallback)
+        } catch (e: Exception) {
+            // Ignore scan stop errors
+        }
     }
 
     private val scanCallback = object : ScanCallback() {
         @SuppressLint("MissingPermission")
         override fun onScanResult(callbackType: Int, result: ScanResult) {
-            val device = result.device
-            val deviceName = device.name ?: result.scanRecord?.deviceName ?: "Unknown"
-            val isTarget = device.address == targetDeviceAddress
-            if (isTarget || deviceName.contains("LED", true) || deviceName.contains("Triones", true)) {
-                if (isManualScan) {
-                    val currentList = _scannedDevices.value.toMutableList()
-                    val index = currentList.indexOfFirst { it.device.address == device.address }
-                    if (index != -1) currentList[index] = result else currentList.add(result)
-                    _scannedDevices.value = currentList
-                } else if (isTarget) { stopScan(); connectToDevice(device) }
-            }
-        }
-        override fun onScanFailed(errorCode: Int) { _isScanning.value = false }
-    }
+            if (isLedController(result)) {
+                val currentList = _scannedDevices.value.toMutableList()
+                val index = currentList.indexOfFirst { it.device.address == result.device.address }
 
-    private val gattCallback = object : BluetoothGattCallback() {
-        @SuppressLint("MissingPermission")
-        override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
-            if (newState == BluetoothProfile.STATE_CONNECTED) gatt.discoverServices()
-            else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                _connectionState.value = ConnectionState.DISCONNECTED; _connectedDevice.value = null
-                bluetoothGatt?.close(); bluetoothGatt = null
-            }
-        }
-        override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
-            if (status == BluetoothGatt.GATT_SUCCESS) {
-                val service = gatt.getService(BleConstants.SERVICE_UUID)
-                val characteristic = service?.getCharacteristic(BleConstants.CHARACTERISTIC_CMD_UUID)
+                // Update existing or add new
+                if (index != -1) currentList[index] = result else currentList.add(result)
+                _scannedDevices.value = currentList
 
-                if (characteristic != null) {
-                    commandCharacteristic = characteristic
-                    _connectionState.value = ConnectionState.CONNECTED
+                // Auto-connect logic (only if not manual scan and target found)
+                if (!isManualScan && targetDeviceAddress != null && result.device.address == targetDeviceAddress) {
+                    Log.d("BleManager", "Target found via scan, auto-connecting...")
+                    connectToDevice(result.device)
                 }
             }
         }
+
+        override fun onScanFailed(errorCode: Int) {
+            _isScanning.value = false
+        }
     }
 
+    // --- CONNECTION MANAGEMENT ---
+
+    @SuppressLint("MissingPermission")
+    fun connectToDevice(device: BluetoothDevice) {
+        if (activeConnections.containsKey(device.address)) return
+
+        _connectionState.value = ConnectionState.CONNECTING
+        saveDeviceToMemory(device)
+
+        targetDeviceAddress = device.address
+        val prefs = context?.getSharedPreferences("LedControllerPrefs", Context.MODE_PRIVATE)
+        prefs?.edit()?.putString("last_device_address", device.address)?.apply()
+
+        device.connectGatt(context, false, object : BluetoothGattCallback() {
+            override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
+                val address = gatt.device.address
+                if (newState == BluetoothProfile.STATE_CONNECTED) {
+                    activeConnections[address] = gatt
+                    updateConnectedList()
+                    gatt.discoverServices()
+                } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                    activeConnections.remove(address)
+                    activeCharacteristics.remove(address)
+                    gatt.close()
+                    updateConnectedList()
+                }
+            }
+
+            override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
+                if (status == BluetoothGatt.GATT_SUCCESS) {
+                    // Try standard UUID, then alternatives
+                    val service = gatt.getService(BleConstants.SERVICE_UUID)
+                        ?: gatt.getService(BleConstants.SERVICE_UUID_ALT_1)
+                        ?: gatt.getService(BleConstants.SERVICE_UUID_ALT_2)
+
+                    // Find writable characteristic (Command or No-Response)
+                    val characteristic = service?.getCharacteristic(BleConstants.CHARACTERISTIC_CMD_UUID)
+                        ?: service?.characteristics?.firstOrNull { (it.properties and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE) != 0 }
+
+                    if (characteristic != null) {
+                        activeCharacteristics[gatt.device.address] = characteristic
+                        updateConnectedList()
+                    }
+                }
+            }
+        })
+    }
+
+    @SuppressLint("MissingPermission")
+    fun connectToAddress(address: String) {
+        val device = bluetoothAdapter?.getRemoteDevice(address)
+        if (device != null) connectToDevice(device)
+    }
+
+    @SuppressLint("MissingPermission")
+    fun disconnectDevice(device: BluetoothDevice) {
+        val gatt = activeConnections[device.address]
+        gatt?.disconnect()
+    }
+
+    @SuppressLint("MissingPermission")
+    fun disconnectAll() {
+        activeConnections.values.forEach { it.disconnect(); it.close() }
+        activeConnections.clear()
+        activeCharacteristics.clear()
+        updateConnectedList()
+    }
+
+    // Legacy method shortcut
+    fun disconnect() = disconnectAll()
+
+    private fun updateConnectedList() {
+        val list = activeConnections.values.map { it.device }.distinctBy { it.address }
+        _connectedDevices.value = list
+        _connectionState.value = if (list.isNotEmpty()) ConnectionState.CONNECTED else ConnectionState.DISCONNECTED
+    }
+
+    // --- COMMAND EXECUTION ---
+
+    // Magic bytes for LED Controller (Triones/Lotus protocol)
     private val commandPayload = byteArrayOf(0x7E.toByte(), 0x00, 0x05, 0x03, 0x00, 0x00, 0x00, 0x00, 0xEF.toByte())
 
     @SuppressLint("MissingPermission")
     fun sendColor(r: Int, g: Int, b: Int) {
-        if (bluetoothGatt == null || commandCharacteristic == null) return
-        commandPayload[4] = r.toByte(); commandPayload[5] = g.toByte(); commandPayload[6] = b.toByte()
-        writeCharacteristicCompat(bluetoothGatt!!, commandCharacteristic!!, commandPayload)
+        if (activeConnections.isEmpty()) return
+
+        commandPayload[4] = r.toByte()
+        commandPayload[5] = g.toByte()
+        commandPayload[6] = b.toByte()
+
+        // Broadcast to all active devices
+        activeConnections.forEach { (address, gatt) ->
+            val char = activeCharacteristics[address]
+            if (char != null) writeCharacteristicCompat(gatt, char, commandPayload)
+        }
+    }
+
+    // --- TILE SERVICE LOGIC (QUICK SETTINGS) ---
+
+    /**
+     * Entry point for TileService.
+     * Attempts to reuse active connection or triggers a "One-Shot" connection if the app is killed.
+     */
+    suspend fun executeCommand(context: Context, r: Int, g: Int, b: Int): Boolean {
+        // 1. If app is alive and connected, use existing connection (Fast)
+        if (activeConnections.isNotEmpty()) {
+            sendColor(r, g, b)
+            return true
+        }
+
+        // 2. If app is killed, initialize and attempt one-shot
+        init(context)
+
+        val prefs = context.getSharedPreferences("LedControllerPrefs", Context.MODE_PRIVATE)
+        val lastAddress = prefs.getString("last_device_address", null) ?: return false
+
+        return connectAndSendOneShot(context, lastAddress, r, g, b)
+    }
+
+    /**
+     * Connects, sends command, and disconnects immediately.
+     * Used when the main application is not running.
+     */
+    @SuppressLint("MissingPermission")
+    private suspend fun connectAndSendOneShot(context: Context, address: String, r: Int, g: Int, b: Int): Boolean {
+        return kotlinx.coroutines.withTimeoutOrNull(4000) { // 4s Safety Timeout
+            suspendCancellableCoroutine<Boolean> { continuation ->
+                val device = bluetoothAdapter?.getRemoteDevice(address)
+                if (device == null) {
+                    if (continuation.isActive) continuation.resume(false, null)
+                    return@suspendCancellableCoroutine
+                }
+
+                val oneShotCallback = object : BluetoothGattCallback() {
+                    override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
+                        if (newState == BluetoothProfile.STATE_CONNECTED) {
+                            gatt.discoverServices()
+                        } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                            gatt.close()
+                            // Fail if disconnected before sending
+                            if (continuation.isActive) continuation.resume(false, null)
+                        }
+                    }
+
+                    override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
+                        if (status == BluetoothGatt.GATT_SUCCESS) {
+                            val service = gatt.getService(BleConstants.SERVICE_UUID)
+                                ?: gatt.getService(BleConstants.SERVICE_UUID_ALT_1)
+                                ?: gatt.getService(BleConstants.SERVICE_UUID_ALT_2)
+
+                            val char = service?.getCharacteristic(BleConstants.CHARACTERISTIC_CMD_UUID)
+                                ?: service?.characteristics?.firstOrNull { (it.properties and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE) != 0 }
+
+                            if (char != null) {
+                                val payload = byteArrayOf(0x7E.toByte(), 0x00, 0x05, 0x03, 0x00, 0x00, 0x00, 0x00, 0xEF.toByte())
+                                payload[4] = r.toByte()
+                                payload[5] = g.toByte()
+                                payload[6] = b.toByte()
+
+                                writeCharacteristicCompat(gatt, char, payload)
+
+                                // Success! Wait briefly for packet transmission then disconnect
+                                Handler(Looper.getMainLooper()).postDelayed({
+                                    gatt.disconnect()
+                                    gatt.close()
+                                    if (continuation.isActive) continuation.resume(true, null)
+                                }, 300)
+                            } else {
+                                gatt.disconnect()
+                            }
+                        } else {
+                            gatt.disconnect()
+                        }
+                    }
+                }
+
+                device.connectGatt(context, false, oneShotCallback)
+            }
+        } ?: false
+    }
+
+    // Helper to handle WriteType based on Android version
+    @SuppressLint("MissingPermission")
+    private fun writeCharacteristicCompat(gatt: BluetoothGatt, char: BluetoothGattCharacteristic, payload: ByteArray) {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                gatt.writeCharacteristic(char, payload, BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE)
+            } else {
+                char.value = payload
+                char.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+                gatt.writeCharacteristic(char)
+            }
+        } catch (e: Exception) {
+            Log.e("BleManager", "Write failed", e)
+        }
     }
 }
